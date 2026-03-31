@@ -1,0 +1,181 @@
+---
+title: "Safety Rails"
+description: "Non-negotiable audio safety constraints enforced by the harness — caps, clamps, and fallbacks that cannot be overridden by model output."
+---
+
+Safety rails are hard constraints applied by the harness after every model response — and in the absence of one. They exist to prevent audio damage, maintain bounded CPU load, and ensure the system behaves safely regardless of what the model sends.
+
+**No model output, contract flag, or configuration can disable these constraints.** They are enforced unconditionally in `ModeEngine.clampFinal()` and `ReverbTarget.clampRails()` on every control cycle.
+
+<Warning>
+  Safety rails are enforced in code and cannot be overridden by model output or runtime configuration. Any attempt to exceed these bounds is silently clamped and logged as an intervention in the frame log.
+</Warning>
+
+---
+
+## Reverb wet cap
+
+The reverb wet mix is capped at **0.50 (50%)** across all modes. This is enforced in `ReverbTarget.clampRails()`, which is called at the end of every `makeControl` cycle via `clampFinal`.
+
+```swift
+// ModeEngine.swift — ReverbTarget.clampRails()
+mutating func clampRails() {
+    wet = min(max(wet, 0.0), 0.50)
+    decay = min(max(decay, 0.0), 1.0)
+    preDelay = min(max(preDelay, 0.0), 1.0)
+    damping = min(max(damping, 0.0), 1.0)
+    xfadeMs = min(max(xfadeMs, 250.0), 1000.0)
+}
+```
+
+The full set of reverb parameter bounds enforced by `clampRails`:
+
+| Parameter | Minimum | Maximum |
+|-----------|---------|---------|
+| `wet` | 0.0 | **0.50** |
+| `decay` | 0.0 | 1.0 |
+| `pre_delay` | 0.0 | 1.0 |
+| `damping` | 0.0 | 1.0 |
+| `xfade_ms` | 250 ms | 1000 ms |
+
+In practice, individual modes set stricter per-mode upper bounds on `reverb.wet` before `clampRails` runs — for example, mode 3 caps it at 0.14 and mode 7 caps it at 0.08. The global 0.50 cap is the absolute ceiling.
+
+---
+
+## Master limiter
+
+A master limiter with a **ceiling of −1 dBFS** sits at the end of the audio output graph. It catches any transient peak that escapes per-mode level bounds. When the limiter engages, the `limiter_hit` flag is set in the frame's `interventions` object.
+
+The limiter does not change mode, params, or any other harness state. It is a pure audio safety net.
+
+---
+
+## Per-mode voice caps
+
+Modes 5 and 6 drive the resonifier/MIDI synthesis engine. Without voice caps, a model producing high `note_rate` or `voice_cap` values could saturate the audio thread. These limits are **hard-coded in the contract bounds** and enforced by `ModeContract.enforceIncoming` before `ModeEngine` ever sees the params.
+
+<Warning>
+  The voice caps for modes 5 and 6 are release-blocking contract constraints. They cannot be relaxed without a protocol version bump and fingerprint update.
+</Warning>
+
+### Mode 5 (MIDI-resonification, wet-only)
+
+| Constraint | Value |
+|------------|-------|
+| Maximum resonifier voices (`voice_cap`) | **8** |
+| Maximum note rate (`note_rate_notes_per_s`) | **12 notes/sec** |
+
+```swift
+// ModeEngine.swift — case 5
+let voiceCap = paramReal("voice_cap", default: 4.0, min: 2.0, max: 8.0, from: out.params)
+let noteRate  = paramReal("note_rate_notes_per_s", ..., min: 0.0, max: 12.0, from: out.params)
+```
+
+### Mode 6 (Parallel dry + resonifier)
+
+| Constraint | Value |
+|------------|-------|
+| Maximum resonifier voices (`voice_cap`) | **3** |
+| Maximum note rate (`note_rate_notes_per_s`) | **6 notes/sec** |
+
+```swift
+// ModeEngine.swift — case 6
+let voiceCap = paramReal("voice_cap", default: 2.0, min: 1.0, max: 3.0, from: out.params)
+let noteRate  = paramReal("note_rate_notes_per_s", ..., min: 0.0, max: 6.0, from: out.params)
+```
+
+### Mode 9 (3-band spatial split / particle)
+
+`particle_voice_cap` is bounded in the range **[1, 24]**. There is no polyphony synthesis in mode 9 — the cap limits particle generator concurrency.
+
+```swift
+// ModeEngine.swift — case 9
+let voiceCap = paramReal("particle_voice_cap", default: 8.0, min: 1.0, max: 24.0, from: out.params)
+```
+
+---
+
+## Mode follows UI switch only
+
+The active DSP mode is set exclusively by the UI mode switch. **The harness never changes mode as a safety or error response.**
+
+When a contract violation, decode error, or timeout occurs, the harness applies safe defaults for the **current mode** and continues. It does not fall back to mode 0, a "safe" mode, or any other mode. This design prevents unexpected sonic transitions during a live performance.
+
+```swift
+// ModeEngine.swift — setMode
+func setMode(_ mode: Int) {
+    currentMode = max(0, min(10, mode))
+}
+```
+
+`mode` is clamped to 0–10 but is only called with the value from `ModelOut.mode`. The audio engine only accepts a mode change if the model responds with a different mode than the current one — and even then, mode transitions are driven by the model echoing what the UI switch has already set, not by the harness acting autonomously.
+
+---
+
+## Non-finite params rejected
+
+All params resolved from `ModelOut` pass through `clampFinal`, which uses `min`/`max` comparisons. Any non-finite value (`NaN`, `+Inf`, `-Inf`) from the model will be replaced by the safe default for that param, since non-finite values fail floating-point comparisons in Swift's `min`/`max`.
+
+The test suite explicitly verifies that every `AudioControl` field is finite after a full sweep of all modes and param boundary values:
+
+```swift
+// TheTubHarnessTests.swift — controlSurfaceSweep
+#expect(control.level.isFinite)
+#expect(control.dryLevel.isFinite)
+#expect(control.wetLevel.isFinite)
+#expect(control.reverb.wet.isFinite)
+```
+
+---
+
+## Contract violation → safe defaults, not mode change
+
+When `ModeContract.enforceIncoming` detects a violation (unknown param key, out-of-bounds value, missing required pick, mismatched protocol version), it clamps or substitutes the offending fields using safe defaults for the current mode. The mode is **not changed**.
+
+The violation is recorded in the frame's `interventions.contract_violation` field and in `diagnostics.interventions` with a `contract_violation:<detail>` tag.
+
+Safe defaults per mode are defined in `ModeContract.safeModeParams` and `ModeContract.defaultPicksByMode`. The contract fingerprint covers these tables — any change requires a protocol version bump.
+
+---
+
+## Model timeout → safe defaults applied
+
+When no `ModelOut` is received within the frame budget (`timed_out: true`), the harness applies `ModeContract.protocolViolationFallback` for the current mode. This produces a `ModelOut` using safe defaults and default picks, which `ModeEngine` then processes normally. The result is a frame with no new model input but with all safety rails still applied.
+
+The timeout is recorded as `interventions.timeout: true`.
+
+---
+
+## CPU guard
+
+A `CPUGuard` monitors audio render thread time against the render budget. When render time exceeds the budget for several consecutive buffers, the guard becomes active and imposes a voice limit below the per-mode maximum. The guard recovers automatically when render time drops back to normal levels.
+
+CPU guard activation is logged as `interventions.cpu_guard: true` in affected frames. The guard does not change mode.
+
+---
+
+## Intervention logging
+
+Every safety rail engagement is recorded in the frame log. The `interventions` object in each frame line provides a structured view:
+
+| Field | When set |
+|-------|----------|
+| `limiter_hit` | Master limiter engaged this frame |
+| `density_cap` | A density param was clamped at its upper bound |
+| `voice_cap` | A voice count param was clamped by the per-mode hard cap |
+| `cpu_guard` | CPU guard throttled voice concurrency |
+| `reset_voices` | Voice reset issued (Clear button or `reset_voices` flag) |
+| `timeout` | No model response within frame budget; safe defaults applied |
+| `decode_error` | Model response received but could not be decoded; safe defaults applied |
+| `contract_violation` | Model output violated the mode contract; safe defaults applied |
+
+See [Log Schema — Interventions field details](/reference/log-schema#interventions-field-details) for the full field reference.
+
+---
+
+## Related pages
+
+- [Mode Contract](/reference/mode-contract) — canonical params, bounds, required picks, and safe defaults per mode
+- [Log Schema](/reference/log-schema) — frame log format and interventions fields
+- [Testing](/reference/testing) — how safety rail behavior is verified in the test suite
+- [Architecture](/architecture) — audio graph and control flow overview

@@ -1,0 +1,89 @@
+---
+title: "Mode 3: Roar/Resonator"
+description: "Resonant wet layer over a punchy dry signal. Drive and bit reduction are bounded; distortion character remains controlled."
+---
+
+## Overview
+
+Mode 3 layers a resonated, distorted wet path over a present dry signal. Drive, bit-depth reduction, and downsampling shape the character of the wet layer — from mild resonant coloring to aggressive lo-fi crush. The dry signal remains punchy and audible throughout, providing grounding for the resonator layer above it.
+
+All destructive parameters are bounded: `drive` is hard-capped at `0.85` and `bit_depth_bits` at a minimum of `8`. The engine also sets `hfClampWetPath=true`, which engages an additional high-frequency clamp on the wet path to prevent harshness even at extreme settings.
+
+**Default picks:** `preset_id=res_default`, `spatial_pattern_id=orbit_slow`
+
+<Warning>
+  `drive` is hard-bounded at `0.85` — values above this are clamped. This is an intentional safety rail. The resonant wet path is additionally HF-clamped regardless of drive level.
+</Warning>
+
+## Parameters
+
+<ParamField path="drive" type="float">
+  Saturation/distortion amount applied to the wet resonator path. Range: `0.0–0.85`. Safe default: `0.52`. Low values add warmth and subtle harmonic coloring; higher values (toward `0.85`) push into more aggressive saturation. The hard cap at `0.85` ensures the distortion remains controlled.
+</ParamField>
+
+<ParamField path="bit_depth_bits" type="float">
+  Bit depth of the bit-reduction effect applied to the wet path. Range: `8–24 bits`. Safe default: `12 bits`. At `24` bits, no bit reduction is audible; at `8` bits, the signal is heavily quantized with strong lo-fi character. Combined with `downsample_amt`, this controls crush severity.
+</ParamField>
+
+<ParamField path="downsample_amt" type="float">
+  Amount of downsampling applied to the wet resonator path. Range: `0.0–1.0`. Safe default: `0.44`. Low values keep the sample rate close to the original; high values reduce the effective sample rate, introducing aliasing and additional lo-fi grit. Works in combination with `bit_depth_bits` to determine overall crush severity.
+</ParamField>
+
+<ParamField path="res_shift" type="float">
+  Resonator tuning shift — how far the resonant frequencies are shifted relative to the default tuning profile. Range: `0.0–1.0`. Safe default: `0.64`. Low values keep resonances close to the profile default; high values shift them, changing the timbral character of the resonant layer.
+</ParamField>
+
+<ParamField path="tone_db" type="float">
+  Tonal tilt in decibels applied to the exciter/tone path. Range: `−9–+6 dB`. Safe default: `−3.0 dB`. Negative values darken the exciter and reduce harshness; positive values brighten the resonant layer. Internally mapped to a normalized `exciteAmount` value for the audio engine.
+</ParamField>
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `drive` | `0.52` |
+| `bit_depth_bits` | `12 bits` |
+| `downsample_amt` | `0.44` |
+| `res_shift` | `0.64` |
+| `tone_db` | `−3.0 dB` |
+
+## Required Picks
+
+| Pick | Default |
+|------|---------|
+| `preset_id` | `res_default` |
+| `spatial_pattern_id` | `orbit_slow` |
+
+The `preset_id` directly sets `resonatorTuningProfileId` in the audio engine. This controls which resonant frequency profile is used for the wet layer.
+
+## Legacy Aliases
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `bit_depth` | `bit_depth_bits` | Linear transform: `[0,1] → [8, 24]` |
+| `downsample` | `downsample_amt` | Direct remap |
+| `resonance` | `res_shift` | Direct remap |
+| `brightness` | `tone_db` | Linear transform: `[0,1] → [−9, 6]` |
+
+<Info>
+  If `tone_db` is absent but `brightness` (legacy) is present, a derived fallback is computed: `tone_db = −9.0 + 15.0 × clamp01(brightness)`. This maps `brightness=0.0` to `−9 dB` and `brightness=1.0` to `+6 dB`.
+</Info>
+
+## Crush Severity
+
+The internal `crushSeverity` value — which determines wet level and dry level in the mix — is derived from both bit-depth and downsample:
+
+```swift
+crushSeverity = clamp(0.60 × (1 − bitDepthNorm) + 0.40 × downsample_amt)
+```
+
+Where `bitDepthNorm` is `(bit_depth_bits − 8) / 16`. A fully crushed signal (`bit_depth_bits=8`, `downsample_amt=1.0`) has `crushSeverity=1.0`, which raises the wet level and lowers the dry level within their respective bounds.
+
+## What to Verify by Ear
+
+- Dry signal should remain audible and punchy even at high `drive` and `downsample_amt` values. The mix is designed so the dry layer grounds the resonator.
+- `drive=0.85` (maximum) should sound aggressive but not uncontrolled — the HF clamp (`hfClampWetPath=true`) prevents the wet path from sounding harsh or brittle.
+- `bit_depth_bits=8` combined with `downsample_amt=1.0` is the most extreme setting. Even here, the mix balance should prevent the result from becoming unusable.
+- `res_shift` should audibly change which frequencies are emphasized by the resonator — different `preset_id` values (tuning profiles) will have different resonant characters.
+- `tone_db=−3.0` (default) means the exciter is slightly darkened from neutral — this is intentional to prevent harshness at mid-drive settings.
+- The `orbit_slow` spatial pattern produces slow, continuous orbital movement suitable for the sustained resonator layer.

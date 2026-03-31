@@ -1,0 +1,165 @@
+---
+title: "Session Artifacts"
+description: "Every file created per session — frame log, events log, session metadata, optional input recording, and the run bundle — with field-level details."
+keywords: ["session artifacts", "frames", "events", "session metadata", "input recording", "bundle"]
+---
+
+When the harness starts a session in `training` mode it creates a directory under `sessions/` and a bundle file under `bundles/`. Performance mode creates no artifacts.
+
+## Session directory structure
+
+```
+sessions/
+  <session_id>/
+    frames_<session_id>.jsonl
+    events_<session_id>.jsonl
+    session_meta_<session_id>.json
+    input_<session_id>.caf          # only when input recording is enabled
+bundles/
+  bundle_<YYYY-MM-DD>_<rev>.json
+```
+
+`session_id` is generated at run-loop start as `session_<unix_ms>` (e.g. `session_1711234567890`).
+
+---
+
+## `frames_<session_id>.jsonl` — 10 Hz frame log
+
+One JSON object per tick. The harness fires at 10 Hz (100 ms interval, 5 ms leeway), so a 60-second session produces roughly 600 lines.
+
+| Field | Type | Description |
+|---|---|---|
+| `ts_ms` | number | Frame timestamp in milliseconds |
+| `frame_index` | number | Monotonic frame number within the session |
+| `session_id` | string | Session identifier (matches directory name) |
+| `frame_hz` | number | Expected frame rate — always `10` |
+| `replay_mode` | boolean | `true` when this frame was produced during a replay |
+| `input_source` | string | `"live"` or `"replay_file"` |
+| `mode` | number | DSP mode active for this frame (0–10) |
+| `buttons` | object | `{jolt: bool, clear: bool}` — state after momentary consumption |
+| `features` | object | Feature vector sent in `ModelIn` |
+| `state` | object\|null | Optional harness state included in `ModelIn` |
+| `model_in` | object | Exact `ModelIn` payload sent to the model server |
+| `model_out` | object\|null | Decoded `ModelOut` response, or `null` on timeout or failure |
+| `diagnostics` | object | Request ID, send/recv timestamps, latency ms, timeout and decode status |
+| `interventions` | object | Active safety and diagnostic flags (see below) |
+| `label` | string\|null | Current human label: `"good"`, `"too_much"`, `"too_flat"`, or `null` |
+| `bundle_id` | string | Active run bundle ID for this session |
+
+### `interventions` fields
+
+| Field | Description |
+|---|---|
+| `limiter_hit` | Master limiter engaged this tick |
+| `density_cap` | Density limit reached |
+| `voice_cap` | Per-mode voice cap reached |
+| `cpu_guard` | CPU guard triggered |
+| `timeout` | Model server did not respond within 500 ms |
+| `decode_error` | `ModelOut` could not be decoded |
+| `contract_violation` | A param value violated the mode contract bounds |
+| `pick_fallback` | A pick ID was missing from the manifest; deterministic default used |
+| `feature_fallback` | A feature value was missing; safe default used |
+| `extras` | Array of any additional diagnostic strings |
+
+---
+
+## `events_<session_id>.jsonl` — event log
+
+Sparse event stream. Currently contains two event types.
+
+### `bundle_header` event
+
+Written once at session startup:
+
+```json
+{
+  "ts_ms": 1711234567890,
+  "event": "bundle_header",
+  "bundle_id": "bundle_2026-03-23_001",
+  "session_id": "session_1711234567890",
+  "bundle": {
+    "policy_version": "v1.2",
+    "bank_manifest_version": "v3",
+    "contract_version": "2",
+    "contract_fingerprint": "a3f9..."
+  }
+}
+```
+
+### `label_change` event
+
+Written each time a human label is set or cleared:
+
+```json
+{
+  "ts_ms": 1711234580000,
+  "event": "label_change",
+  "from": null,
+  "to": "good",
+  "bundle_id": "bundle_2026-03-23_001",
+  "session_id": "session_1711234567890"
+}
+```
+
+`from` and `to` are each one of `"good"`, `"too_much"`, `"too_flat"`, or `null`.
+
+---
+
+## `session_meta_<session_id>.json` — session metadata
+
+Written at session start and updated when the session closes. Contains audio route information, alignment anchors, and replay context.
+
+| Field | Type | Description |
+|---|---|---|
+| `session_id` | string | Session identifier |
+| `bundle_id` | string | Run bundle ID |
+| `created_at` | string | ISO 8601 creation timestamp |
+| `sample_rate` | number | Audio sample rate (Hz) |
+| `channels` | number | Audio channel count |
+| `input_audio_format` | string | `"caf"` or `"wav"` |
+| `input_audio_path` | string\|null | Absolute path to the `.caf` file, or `null` when recording is disabled |
+| `frames_path` | string | Absolute path to the frames JSONL file |
+| `events_path` | string | Absolute path to the events JSONL file |
+| `frame_hz` | number | Frame rate — always `10` |
+| `record_input_audio_enabled` | boolean | Whether input recording was active for this session |
+| `replay_mode` | boolean | `true` if this session was started as a replay |
+| `replayed_session_id` | string\|null | Source session ID when `replay_mode` is `true` |
+| `replay_audio_missing` | boolean | `true` if the session was a replay and no input audio file was found |
+| `alignment.start_ts_ms` | number | Harness clock timestamp when audio alignment was noted |
+| `alignment.audio_start_host_time` | number | CoreAudio host time at alignment |
+| `alignment.audio_start_sample_index` | number | Audio engine sample index at alignment |
+
+---
+
+## `input_<session_id>.caf` — input recording
+
+<Note>
+This file is only created when the **Record Input Audio (CAF)** switch is enabled before the session starts, or when the `--record-input-audio true` launch argument is passed. When recording is disabled, `input_audio_path` in session metadata is `null` and no `.caf` file is written.
+</Note>
+
+The `.caf` file captures the raw audio signal from the selected input device, sampled at the device's native rate. It is written to the session directory in CoreAudio Format.
+
+During [UI replay by session ID](/running/replay-mode), the harness looks for this file and, if found, rejects it into the input bus path so the replay audio stays synchronized with the frame stream.
+
+---
+
+## `bundles/bundle_<YYYY-MM-DD>_<rev>.json` — run bundle
+
+A bundle file is created once per run-loop start (in `training` mode). Multiple sessions started on the same day share the same `YYYY-MM-DD` prefix; `<rev>` is a monotonic counter that prevents collisions.
+
+The bundle records the policy version, manifest versions, and the mode contract fingerprint in effect for the run. The startup log line echoes this information:
+
+```
+running bundle <bundle_id> (policy=<version>, banks=<version>, contract=<version>) fp=<fingerprint_prefix> lock=<ok|mismatch>
+```
+
+`lock=mismatch` means the harness's locked contract fingerprint does not match the computed fingerprint of the currently loaded contract. This is a release blocker — see the [mode contract reference](/reference/log-schema) for details.
+
+<CardGroup cols={2}>
+  <Card title="Replay Mode" icon="rotate" href="/running/replay-mode">
+    Use session artifacts to replay a recorded session headlessly or via the UI.
+  </Card>
+  <Card title="Log Schema" icon="file-lines" href="/reference/log-schema">
+    Full schema reference for frames, events, and session metadata.
+  </Card>
+</CardGroup>

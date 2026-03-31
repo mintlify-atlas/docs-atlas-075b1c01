@@ -1,97 +1,61 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "The Tub Harness"
+description: "Real-time audio processing harness for THE TUB — 11 DSP modes driven by ML at 10 Hz"
 ---
 
-## Setting up
+The Tub Harness is a macOS SwiftUI app that bridges live audio input and an external ML model server. It runs a 10 Hz frame loop, packages audio features into protocol v2 packets, applies mode-specific DSP to the live audio graph, and logs a training substrate to JSONL for each session.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build the app, start the model server, and run your first live session in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the core loop: TubMLClient, AudioEngineController, and ContentView.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="DSP Modes" icon="waveform" href="/modes/overview">
+    Explore all 11 processing modes — from clean pass-through to granular synthesis.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Protocol Contract" icon="file-contract" href="/reference/mode-contract">
+    Protocol v2 spec: canonical params, bounds, picks, and the locked contract fingerprint.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Start the model server">
+    Run `tub-ml serve` from the companion ML repo. The harness connects over UDP on port `9910` by default.
+  </Step>
+  <Step title="Open the Xcode project">
+    Open `TheTubHarness/TheTubHarness.xcodeproj` and run the `TheTubHarness` scheme targeting macOS.
+  </Step>
+  <Step title="Select your input">
+    In the 4-panel UI, use the **Input** picker to choose your microphone or line input device. Select the **Audio + Real Features** run profile.
+  </Step>
+  <Step title="Choose a mode and run">
+    Pick a DSP mode (0–10), press **Start**, and use the **JOLT** and **CLEAR** buttons to interact with the ML model in real time.
+  </Step>
+</Steps>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Key capabilities
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="11 DSP modes" icon="sliders" href="/modes/overview">
+    Beat repeat, granulator, resonator, MIDI resonification, spatial splitting, and more.
+  </Card>
+  <Card title="Manifest-backed routing" icon="route" href="/manifests/overview">
+    Banks, instruments, chords, motifs, and spatial patterns resolve from JSON manifests at startup.
+  </Card>
+  <Card title="Session replay" icon="rotate-left" href="/running/replay-mode">
+    Replay recorded traces headlessly or with injected audio, at any speed multiplier.
+  </Card>
+  <Card title="Training substrate logging" icon="database" href="/running/session-artifacts">
+    Every session writes 10 Hz frame logs, event logs, and session metadata for ML training.
+  </Card>
+  <Card title="Safety rails" icon="shield-halved" href="/reference/safety-rails">
+    Reverb wet capped at 0.50, master limiter at −1 dBFS, per-mode voice caps enforced.
+  </Card>
+  <Card title="Log schema" icon="scroll" href="/reference/log-schema">
+    Detailed JSONL schema for frames, events, and session metadata.
+  </Card>
+</CardGroup>

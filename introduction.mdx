@@ -1,0 +1,156 @@
+---
+title: 'Introduction'
+description: 'What The Tub Harness is, what it does, and how its core concepts fit together.'
+keywords: ['tub harness', 'audio processing', 'dsp', 'ml model', 'udp', 'training substrate']
+---
+
+The Tub Harness is a macOS SwiftUI app that serves as the real-time audio processing harness for THE TUB. It bridges a live microphone or line input, an external ML model server, and a DSP engine — turning machine learning predictions into audible, spatial, and visual output at 10 frames per second.
+
+The harness exists to solve a specific problem: a standalone ML model that produces control decisions is useless without a host that can (a) feed it live audio features on a tight schedule, (b) translate its outputs into actual DSP parameters, and (c) log every frame so those interactions become training data. The Tub Harness is that host.
+
+## Key concepts
+
+### Mode contract
+
+The app operates in one of 11 DSP modes, numbered 0–10. Each mode has a different sonic character — from mode 0 (clean, subtle room reverb) to mode 10 (maximum disruption with aggressive spectral redistribution). The mode contract defines the complete, versioned specification for all 11 modes: canonical parameter names, allowed value ranges, required picks, legacy aliases, visual-head schema, and safe defaults.
+
+<Info>
+  The contract carries a pinned fingerprint (`ModeContract.lockedContractFingerprint`). If the fingerprint in the harness does not match the fingerprint in the model server, the mismatch is logged and treated as a release blocker. Never ship a harness/model pair with a fingerprint mismatch.
+</Info>
+
+The mode is **always** controlled by the UI switch. The ML model cannot change the mode; it only controls parameters within the current mode.
+
+### 10 Hz loop
+
+Every 100 ms, `TubMLClient` fires a timer tick. It:
+
+1. Reads live audio features from `AudioEngineController` (loudness, onset rate, spectral centroid, band energies, pitch, key estimate, noisiness).
+2. Packages those features along with the current mode, button state, session ID, and harness state into a `ModelIn` packet.
+3. Sends the packet to the model server over UDP.
+4. Waits up to 500 ms for a `ModelOut` response.
+5. Publishes the response so `AudioEngineController` and `ContentView` can react.
+
+The loop runs on a `userInitiated` dispatch queue, keeping audio and networking off the main thread.
+
+### UDP protocol
+
+The wire format is JSON with snake_case keys. The harness encodes outgoing `ModelIn` packets with `JSONEncoder.convertToSnakeCase` and decodes incoming `ModelOut` packets with `JSONDecoder.convertFromSnakeCase`. Unknown keys in any packet are **rejected** — strict decoding is enforced to catch protocol drift early.
+
+```json
+// ModelIn (sent by harness → model server)
+{
+  "protocol_version": 2,
+  "ts_ms": 1711234567890,
+  "session_id": "macos_harness_dev",
+  "frame_hz": 10,
+  "mode": 3,
+  "buttons": { "jolt": false, "clear": false },
+  "features": {
+    "loudness_lufs": -18.4,
+    "onset_rate_hz": 2.1,
+    "spec_centroid_hz": 1840.0,
+    "band_low": 0.42,
+    "band_mid": 0.35,
+    "band_high": 0.23,
+    "noisiness": 0.18,
+    "pitch_hz": 220.0,
+    "pitch_conf": 0.91,
+    "key_estimate": "A",
+    "key_conf": 0.77
+  }
+}
+```
+
+```json
+// ModelOut (sent by model server → harness)
+{
+  "protocol_version": 2,
+  "ts_ms": 1711234567923,
+  "mode": 3,
+  "params": { "reverb_wet": 0.28, "drive": 0.45, "resonance": 0.6 },
+  "picks": { "preset_id": "res_default", "spatial_pattern_id": "orbit_slow" },
+  "flags": { "request_cooldown": false, "prefer_stability": true, "thin_events": false, "reset_voices": false },
+  "visual": {
+    "scene_id": "fault_lattice",
+    "density": 0.44,
+    "cohesion": 0.50,
+    "disruption": 0.68,
+    "token_salience": 0.48,
+    "wordmark_integrity": 0.50,
+    "decay_ms": 920,
+    "flash_bias": 0.44,
+    "anchor_weights": [0.24, 0.28, 0.48],
+    "thought": "responding_to_transient"
+  }
+}
+```
+
+### Manifest routing
+
+`ModelOut.picks` contains symbolic IDs — `preset_id`, `bank_id`, `sample_id`, `midi_inst_id`, `chord_set_id`, `motif_id`, `spatial_pattern_id`, and others. These IDs are resolved at runtime against JSON manifests loaded from the `Manifests/` bundle directory:
+
+- `banks.json`
+- `instruments.json`
+- `chords.json`
+- `motifs.json`
+- `spatial_patterns.json`
+
+`ManifestCatalog` loads all manifests at startup and validates that mode-default picks resolve against them. Any ID the model returns that does not exist in the catalog causes a logged warning and a fallback to the deterministic per-mode default.
+
+<Note>
+  Missing manifest IDs never produce silence or a crash — the fallback path is always safe. Monitor the event log for `pick_fallback` entries if the model starts returning unrecognized IDs.
+</Note>
+
+### Training substrate
+
+Every session produces a set of artifacts in `sessions/<session_id>/`:
+
+| File | Contents |
+|---|---|
+| `frames_<session_id>.jsonl` | One JSON line per 10 Hz tick: `ModelIn`, `ModelOut`, interventions, human label |
+| `events_<session_id>.jsonl` | Discrete events (mode changes, JOLT, CLEAR, label changes, pick fallbacks) |
+| `session_meta_<session_id>.json` | Session metadata: start time, bundle ID, contract fingerprint, run profile |
+| `input_<session_id>.caf` | Raw mic/line input audio (only when input recording is enabled) |
+
+These artifacts are the training substrate — the raw material fed back to the ML training pipeline. The `JSONLLogger` class writes all files, flushing on every frame to minimize data loss if the process is killed.
+
+## Architecture overview
+
+The app is built around three primary objects that communicate through Combine's `@Published`/`@ObservableObject` pattern:
+
+```
+Microphone / Line Input
+        │
+        ▼
+AudioEngineController  ──────────────────────────────────────►  AVAudioEngine
+        │  (features)                                            (DSP graph)
+        ▼
+  TubMLClient  ─── UDP ──►  Model Server  ─── UDP ──►  TubMLClient
+        │  (ModelOut)
+        ▼
+  ContentView (4-panel control room UI)
+        │
+        ├── TubMLClient  (@ObservableObject)
+        └── AudioEngineController  (@ObservableObject)
+```
+
+**`TubMLClient`** owns the 10 Hz timer, UDP connection, session lifecycle, and `JSONLLogger`. It is the central coordinator of the run loop.
+
+**`AudioEngineController`** owns the `AVAudioEngine` graph. It subscribes to `TubMLClient.lastOut` and applies mode-specific DSP — reverb, granulation, resonation, spatial panning, voice management — in response to each new `ModelOut`. Audio safety rails are enforced here unconditionally: reverb wet ≤ 0.50, limiter ceiling at −1 dBFS, per-mode voice caps.
+
+**`ContentView`** is the 4-panel control room. It binds to both objects and provides the mode picker, JOLT/CLEAR buttons, human label controls, run profile selector, input device picker, visual stage, and session log paths.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build the app, start the model server, and run your first live session in minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Deep dive into the core loop, DSP subsystem, manifest routing, logging, and threading model.
+  </Card>
+  <Card title="Modes overview" icon="sliders" href="/modes/overview">
+    Understand the sonic character and parameter space of all 11 DSP modes.
+  </Card>
+  <Card title="Mode contract" icon="file-contract" href="/reference/mode-contract">
+    Protocol v2 specification: canonical params, aliases, bounds, and fingerprint rules.
+  </Card>
+</CardGroup>

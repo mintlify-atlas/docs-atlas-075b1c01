@@ -1,0 +1,158 @@
+---
+title: "Live Run"
+description: "Start a live session in The Tub Harness, select your input device, apply human labels, and understand where session files are written."
+keywords: ["live run", "session", "audio input", "human labels", "run profile"]
+---
+
+## Prerequisites
+
+Before starting the app, the model server must be running. From the `the-tub-ml` repo:
+
+```bash
+cd /Users/seb/the-tub-ml
+source .venv/bin/activate
+tub-ml serve --config configs/stub_policy_v1.yaml
+```
+
+The harness connects to the model server at `127.0.0.1:9910` by default. If the server is not reachable the harness will log timeout errors for each 10 Hz tick.
+
+## Starting the app
+
+<Steps>
+  <Step title="Open the Xcode project">
+    ```bash
+    open /Users/seb/the-tub-harness/TheTubHarness/TheTubHarness.xcodeproj
+    ```
+  </Step>
+  <Step title="Select the run scheme">
+    In Xcode, confirm the active scheme is **TheTubHarness** targeting **My Mac**.
+  </Step>
+  <Step title="Run">
+    Press **⌘R** or click the Run button. The app window opens with the 4-panel control room UI.
+  </Step>
+  <Step title="Confirm model connection">
+    Check that the harness is receiving model responses — the `recv` counter in the UI should be incrementing and `lastError` should be empty.
+  </Step>
+</Steps>
+
+## Selecting an input device
+
+The top-row **Input** picker lists all available microphone and line input devices recognized by CoreAudio. Select the device you want to feed into the processing pipeline.
+
+The output path is input-driven — there is no synthetic test-tone fallback. If no live input signal is present the mode engine still runs, but the audio output will reflect a silent or near-silent source.
+
+## Run profiles
+
+The default run profile is **Audio + Real Features**. This profile:
+
+- Captures live audio from the selected input device
+- Extracts real-time features and sends them in each `ModelIn` packet at 10 Hz
+- Applies the model's `ModelOut` response through the mode engine and DSP graph
+
+A **HarnessRunMode** flag controls logging behavior:
+
+| Mode | Logging | Bundle tracking |
+|---|---|---|
+| `training` | Full JSONL frame + event logs | Yes |
+| `performance` | None | No |
+
+Use `training` mode (the default) when capturing data for the ML pipeline.
+
+## Controlling the session
+
+The **mode switch** in the UI sets the current DSP mode (0–10). Mode changes take effect on the next 10 Hz tick and are reflected in every subsequent frame log entry.
+
+| Mode | Name |
+|---|---|
+| 0 | Clean |
+| 1 | Beat Repeat |
+| 2 | Granulator |
+| 3 | Roar / Resonator |
+| 4 | Clean + samples + resynthesis |
+| 5 | MIDI-resonification wet-only |
+| 6 | Parallel dry + resonifier |
+| 7 | Swap Buckets |
+| 8 | Spatial dry + diffuse verb |
+| 9 | 3-band spatial split |
+| 10 | (reserved) |
+
+**JOLT** — Press the JOLT button for a momentary pulse, or hold it to sustain the jolt flag across multiple ticks. JOLT is consumed on the next send tick; holding keeps it active until released.
+
+**CLEAR** — Press CLEAR for a momentary clear pulse. This releases resonifier voices in modes 5 and 6 and resets per-mode state where applicable.
+
+Safety rails that are always enforced regardless of mode:
+
+- Reverb wet capped at ≤ 0.50
+- Master limiter ceiling at −1 dBFS
+- Mode 5: max 8 resonifier voices, 12 notes/sec
+- Mode 6: max 3 resonifier voices, 6 notes/sec
+- Mode follows the UI switch only — no automatic mode flips
+
+## Human labeling
+
+Sticky human labels can be applied at any time during a session. The active label is stamped on every subsequent frame log entry and a `label_change` event is written to the events log.
+
+| Key | Button | Label value |
+|---|---|---|
+| `1` | Good | `good` |
+| `2` | Too Much | `too_much` |
+| `3` | Too Flat | `too_flat` |
+| `0` | Clear Label | `null` |
+
+Labels persist until explicitly changed. Clearing the label (`0` / Clear Label) sets the value to `null` for subsequent frames.
+
+## Input recording
+
+<Info>
+The `Record Input Audio (CAF)` switch defaults to **OFF**. Recording must be explicitly enabled either in the UI or via launch argument before starting a session.
+</Info>
+
+When enabled, the harness captures the raw input signal to a `.caf` file alongside the other session artifacts. There are two ways to enable it:
+
+**UI toggle** — Flip the `Record Input Audio (CAF)` switch before clicking Start. Changing it after the session has started has no effect on the current session.
+
+**Launch argument** — Pass `--record-input-audio true` (or `false`) when launching the binary. This overrides the UI default.
+
+```bash
+"$APP_BIN" --record-input-audio true
+```
+
+The recorded file is written to `sessions/<session_id>/input_<session_id>.caf`. If recording is disabled, `input_audio_path` in session metadata is `null`.
+
+## Session output
+
+When the run loop starts (in `training` mode), the harness creates the following artifacts under the app's working directory:
+
+```
+sessions/
+  <session_id>/
+    frames_<session_id>.jsonl       # 10 Hz frame log
+    events_<session_id>.jsonl       # bundle header + label change events
+    session_meta_<session_id>.json  # session metadata
+    input_<session_id>.caf          # input recording (only when enabled)
+bundles/
+  bundle_<YYYY-MM-DD>_<rev>.json    # run bundle
+```
+
+On startup the harness prints the bundle log line:
+
+```
+running bundle <bundle_id> (policy=..., banks=..., contract=...)
+```
+
+<Note>
+The bundle log line also includes `fp=<contract_fingerprint_prefix>` and `lock=<ok|mismatch>`. A `lock=mismatch` means the harness contract fingerprint does not match the model's — this is a release blocker and should not be ignored.
+</Note>
+
+See [Session Artifacts](/running/session-artifacts) for a full description of every file and its fields.
+
+## Stopping a session
+
+Click the **Stop** button in the UI (or stop the process). The harness:
+
+1. Cancels the 10 Hz timer
+2. Flushes and closes all JSONL log files
+3. Clears the active bundle and session ID
+4. Retains the last finished session as the feedback target so labels can still be applied after the session ends
+
+After stopping, the session files remain on disk and can be replayed via the [Replay Mode](/running/replay-mode) workflow.

@@ -1,0 +1,355 @@
+---
+title: "Banks, Chords, Motifs & Spatial Patterns"
+description: "Field reference for banks.json, chords.json, motifs.json, and spatial_patterns.json — the four non-instrument manifest tables."
+keywords: ["banks", "chords", "motifs", "spatial patterns", "bank_id", "chord_set_id", "spatial_pattern_id", "manifest"]
+---
+
+Four manifest files handle everything that isn't a sampler instrument: sound banks, harmonic chord sets, melodic motifs, and spatial movement algorithms. This page documents each table, its pick field, which modes depend on it, and what happens when a referenced ID is missing.
+
+## banks.json
+
+### Purpose
+
+Sound banks group audio assets by type. A bank can contain audio samples, MIDI phrase files, or particle profiles. The `bank_id` pick selects the active bank; `sample_id` selects an individual asset within it.
+
+### File location
+
+```
+TheTubHarness/TheTubHarness/Manifests/banks.json
+```
+
+### Full file
+
+```json
+{
+  "samples_A": {
+    "type": "samples",
+    "default_sample_id": "s000",
+    "assets": [
+      { "id": "s000", "path": "Assets/Samples/ultrachunk/s000.wav", "gain": 0.95, "category": "general" },
+      { "id": "s001", "path": "Assets/Samples/ultrachunk/s001.wav", "gain": 0.95, "category": "metal" },
+      { "id": "s002", "path": "Assets/Samples/ultrachunk/s002.wav", "gain": 0.90, "category": "room" },
+      { "id": "s003", "path": "Assets/Samples/ultrachunk/s003.wav", "gain": 0.92, "category": "transient" }
+    ]
+  },
+  "phrases_A": {
+    "type": "midi_phrases",
+    "default_phrase_id": "p000",
+    "assets": [
+      { "id": "p000", "path": "Assets/MIDI/phrases/p000.mid" }
+    ]
+  },
+  "particles_A": {
+    "type": "particles",
+    "default_profile_id": "ptc0",
+    "assets": [
+      { "id": "ptc0", "path": "Assets/Particles/ptc0.json" }
+    ]
+  }
+}
+```
+
+### Bank types
+
+| `type` value | Asset content | Default pointer field |
+|---|---|---|
+| `samples` | WAV/AIFF audio files | `default_sample_id` |
+| `midi_phrases` | MIDI sequence files (.mid) | `default_phrase_id` |
+| `particles` | Particle profile JSON files | `default_profile_id` |
+
+### Field reference
+
+<ParamField path="type" type="string" required>
+  Bank type. One of `"samples"`, `"midi_phrases"`, or `"particles"`. Determines how the engine uses the assets and which default pointer field applies.
+</ParamField>
+
+<ParamField path="default_sample_id" type="string">
+  ID of the default asset to use when `sample_id` in a pick is blank or unresolvable. Applies only to `"samples"` banks.
+</ParamField>
+
+<ParamField path="default_phrase_id" type="string">
+  Default asset ID for `"midi_phrases"` banks.
+</ParamField>
+
+<ParamField path="default_profile_id" type="string">
+  Default asset ID for `"particles"` banks.
+</ParamField>
+
+<ParamField path="assets" type="object[]" required>
+  Array of asset entries. Each entry has:
+  - `id` (string, required) — the ID used in `sample_id` picks
+  - `path` (string, required) — bundle-relative path to the asset file or directory
+  - `gain` (number, optional) — linear gain scalar applied when the asset is played (not in dB)
+  - `category` (string, optional) — freeform label (e.g., `"general"`, `"metal"`, `"room"`, `"transient"`) for organizing assets; not used by the routing engine
+</ParamField>
+
+### Which modes use banks
+
+| Mode | Description | Default `bank_id` |
+|---|---|---|
+| 4 | Clean + samples + resynthesis | `samples_A` |
+| 9 | 3-band spatial split | `samples_A`, `phrases_A`, `particles_A` |
+
+Mode 9 uses all three bank types to drive its low/mid/high band architecture. Mode 4 draws exclusively from `samples_A` for sparse gesture-layer responses.
+
+### Missing ID behavior
+
+If `bank_id` resolves to an unknown key:
+
+- For modes that require `bank_id`: falls back to `ModeContract.defaultPicksByMode[mode].bankId`, then the first alphabetically sorted bank key
+- For modes that don't require `bank_id`: the unknown ID is ignored and `bankId` is set to `nil` with a note: `"bank_id <id> unknown, ignoring"`
+
+If `sample_id` is blank or missing after a bank is resolved, the bank's `default_sample_id` is used. If that is also absent, the first asset in the `assets` array is selected.
+
+---
+
+## chords.json
+
+### Purpose
+
+Chord sets constrain the MIDI note choices made during MIDI-resonification. The `chord_set_id` pick selects the active chord set; the engine uses the intervals to quantize or harmonize notes relative to the current root.
+
+### File location
+
+```
+TheTubHarness/TheTubHarness/Manifests/chords.json
+```
+
+### Full file
+
+```json
+{
+  "cs_neutral":    { "key": "unknown", "intervals": [0, 3, 7, 10] },
+  "cs_open5":      { "key": "unknown", "intervals": [0, 7, 12] },
+  "cs_modal":      { "key": "unknown", "intervals": [0, 2, 5, 7, 10] },
+  "cs_C_major":    { "key": "C",       "intervals": [0, 4, 7, 11] },
+  "cs_C_minor":    { "key": "C",       "intervals": [0, 3, 7, 10] },
+  "cs_D_major":    { "key": "D",       "intervals": [0, 4, 7, 11] },
+  "cs_D_minor":    { "key": "D",       "intervals": [0, 3, 7, 10] },
+  "cs_E_major":    { "key": "E",       "intervals": [0, 4, 7, 11] },
+  "cs_E_minor":    { "key": "E",       "intervals": [0, 3, 7, 10] },
+  "cs_F_major":    { "key": "F",       "intervals": [0, 4, 7, 11] },
+  "cs_F_minor":    { "key": "F",       "intervals": [0, 3, 7, 10] },
+  "cs_G_major":    { "key": "G",       "intervals": [0, 4, 7, 11] },
+  "cs_G_minor":    { "key": "G",       "intervals": [0, 3, 7, 10] },
+  "cs_A_major":    { "key": "A",       "intervals": [0, 4, 7, 11] },
+  "cs_A_minor":    { "key": "A",       "intervals": [0, 3, 7, 10] },
+  "cs_B_major":    { "key": "B",       "intervals": [0, 4, 7, 11] },
+  "cs_B_minor":    { "key": "B",       "intervals": [0, 3, 7, 10] },
+  "cs_whole_tone": { "key": "unknown", "intervals": [0, 2, 4, 6, 8, 10] },
+  "cs_pent_major": { "key": "unknown", "intervals": [0, 2, 4, 7, 9] },
+  "cs_pent_minor": { "key": "unknown", "intervals": [0, 3, 5, 7, 10] }
+}
+```
+
+### Field reference
+
+<ParamField path="key" type="string" required>
+  Tonic label for the chord set. Use a note name (`"C"`, `"D"`, etc.) for key-specific sets, or `"unknown"` for sets that are key-agnostic (modal, pentatonic, whole-tone).
+</ParamField>
+
+<ParamField path="intervals" type="number[]" required>
+  Semitone offsets from the root note, in ascending order. The engine uses these to build the set of allowable MIDI pitches when generating or harmonizing resonifier notes. `0` is always the root.
+</ParamField>
+
+### Which modes use chords
+
+| Mode | Description | Default `chord_set_id` |
+|---|---|---|
+| 5 | MIDI-resonification wet-only | `cs_neutral` |
+| 6 | Parallel dry + resonifier | `cs_neutral` |
+
+`cs_neutral` (`[0, 3, 7, 10]`) is a minor-seventh voicing that works across most tonal contexts without imposing strong key character — a safe starting point for model-driven harmony.
+
+### Missing ID behavior
+
+If `chord_set_id` doesn't resolve: falls back to `ModeContract.defaultPicksByMode[mode].chordSetId`, then the first alphabetically sorted chord key, then the hardcoded string `"cs_neutral"`.
+
+---
+
+## motifs.json
+
+### Purpose
+
+Motifs define short melodic figures — sequences of relative pitches and durations — that the engine can play through a sampler instrument. The `motif_id` pick selects the active motif.
+
+### File location
+
+```
+TheTubHarness/TheTubHarness/Manifests/motifs.json
+```
+
+### Full file
+
+```json
+{
+  "motif_run_up":      { "notes": [0, 2, 4, 7],    "durations_ms": [120, 120, 140, 200], "velocity_scale": 1.00 },
+  "motif_pulse_low":   { "notes": [0, -5, 0],       "durations_ms": [220, 180, 260],      "velocity_scale": 0.85 },
+  "motif_down_fall":   { "notes": [7, 4, 2, 0],     "durations_ms": [140, 140, 140, 220], "velocity_scale": 0.95 },
+  "motif_broken_triad":{ "notes": [0, 7, 12, 7],    "durations_ms": [160, 150, 170, 220], "velocity_scale": 0.92 },
+  "motif_crawl":       { "notes": [0, 1, 3, 5],     "durations_ms": [180, 180, 180, 220], "velocity_scale": 0.88 },
+  "motif_step_up":     { "notes": [0, 2, 4],        "durations_ms": [130, 130, 180],      "velocity_scale": 0.90 },
+  "motif_step_down":   { "notes": [4, 2, 0],        "durations_ms": [130, 130, 180],      "velocity_scale": 0.90 },
+  "motif_wide_jump":   { "notes": [0, 12, 7],       "durations_ms": [180, 150, 220],      "velocity_scale": 0.96 },
+  "motif_minor_wave":  { "notes": [0, 3, 7, 3],     "durations_ms": [170, 140, 170, 210], "velocity_scale": 0.94 },
+  "motif_sparse":      { "notes": [0, 7],           "durations_ms": [260, 320],           "velocity_scale": 0.80 }
+}
+```
+
+### Field reference
+
+<ParamField path="notes" type="number[]" required>
+  Semitone offsets relative to the current root note. Positive values go up; negative values go down. The engine transposes these relative to the active chord set and root before scheduling MIDI notes. The `notes` and `durations_ms` arrays must have the same length.
+</ParamField>
+
+<ParamField path="durations_ms" type="number[]" required>
+  Duration of each note in milliseconds. Must be the same length as `notes`. Controls the gate time for each note event.
+</ParamField>
+
+<ParamField path="velocity_scale" type="number" default="1.0">
+  Multiplier applied to the MIDI velocity for all notes in this motif. Values below `1.0` produce softer playback. Range in the current manifest: `0.80` to `1.00`.
+</ParamField>
+
+### Motif catalog at a glance
+
+| ID | Notes | Character |
+|---|---|---|
+| `motif_run_up` | `[0, 2, 4, 7]` | Ascending four-note run |
+| `motif_pulse_low` | `[0, −5, 0]` | Downward drop and return |
+| `motif_down_fall` | `[7, 4, 2, 0]` | Descending four-note fall |
+| `motif_broken_triad` | `[0, 7, 12, 7]` | Arpeggiated broken triad |
+| `motif_crawl` | `[0, 1, 3, 5]` | Chromatic/step ascent |
+| `motif_step_up` | `[0, 2, 4]` | Short rising step |
+| `motif_step_down` | `[4, 2, 0]` | Short falling step |
+| `motif_wide_jump` | `[0, 12, 7]` | Octave leap then fall |
+| `motif_minor_wave` | `[0, 3, 7, 3]` | Minor wave up and back |
+| `motif_sparse` | `[0, 7]` | Two-note, widely spaced |
+
+### Missing ID behavior
+
+`motif_id` falls back to the mode default from `ModeContract.defaultPicksByMode[mode].motifId` without raising a warning. Motifs are optional routing hints, not hard requirements, for all current modes.
+
+---
+
+## spatial_patterns.json
+
+### Purpose
+
+Every mode requires a valid `spatial_pattern_id`. Spatial patterns define how sound sources move in the stereo/spatial field over time. The pattern's `algo` selects the movement algorithm; `speed`, `spread`, `jump_prob`, and `jitter` shape the algorithm's behavior.
+
+### File location
+
+```
+TheTubHarness/TheTubHarness/Manifests/spatial_patterns.json
+```
+
+### Full file
+
+```json
+{
+  "drift_slow":     { "algo": "drift",          "speed": 0.20, "spread": 0.65 },
+  "orbit_slow":     { "algo": "orbit",          "speed": 0.25, "spread": 0.55 },
+  "orbit_mid":      { "algo": "orbit",          "speed": 0.45, "spread": 0.55 },
+  "tight_static":   { "algo": "static",         "spread": 0.25 },
+  "fragment_soft":  { "algo": "fragment",       "speed": 0.35, "spread": 0.45, "jump_prob": 0.25 },
+  "orbit_var":      { "algo": "orbit",          "speed": 0.55, "spread": 0.60, "jitter": 0.20 },
+  "orbit_pulse":    { "algo": "orbit_pulse",    "speed": 0.52, "spread": 0.42, "jitter": 0.12 },
+  "jump_cut":       { "algo": "jump_cut",       "speed": 0.70, "spread": 0.38, "jump_prob": 0.55 },
+  "cluster_rotate": { "algo": "cluster_rotate", "speed": 0.30, "spread": 0.62, "jitter": 0.08 }
+}
+```
+
+### Field reference
+
+<ParamField path="algo" type="string" required>
+  The spatial movement algorithm. One of:
+  - `"drift"` — slow continuous random drift across the field
+  - `"orbit"` — circular or elliptical orbiting motion
+  - `"static"` — no movement; sources stay at fixed positions
+  - `"fragment"` — discontinuous fragmented positioning with probability-driven jumps
+  - `"orbit_pulse"` — orbit with periodic amplitude pulses
+  - `"jump_cut"` — sharp probabilistic position jumps
+  - `"cluster_rotate"` — clustered group rotation with jitter
+</ParamField>
+
+<ParamField path="speed" type="number">
+  Normalized movement speed, `0.0` (stopped) to `1.0` (maximum). Not applicable to `"static"`. Scales the algorithm's time base.
+</ParamField>
+
+<ParamField path="spread" type="number">
+  Normalized width of the spatial field used, `0.0` (mono/center) to `1.0` (full width). Controls how far from center sources are allowed to travel. `"tight_static"` uses `0.25`; `"drift_slow"` uses `0.65`.
+</ParamField>
+
+<ParamField path="jump_prob" type="number">
+  Probability per update that a source jumps to a new position rather than continuing its motion. Used by `"fragment"` (`0.25`) and `"jump_cut"` (`0.55`). Not present on purely continuous algorithms.
+</ParamField>
+
+<ParamField path="jitter" type="number">
+  Random offset magnitude added each update, normalized `0.0`–`1.0`. Prevents perfectly regular motion on orbit-family algorithms. Used by `"orbit_var"` (`0.20`), `"orbit_pulse"` (`0.12`), and `"cluster_rotate"` (`0.08`).
+</ParamField>
+
+### Pattern catalog at a glance
+
+| ID | Algorithm | Speed | Spread | Character |
+|---|---|---|---|---|
+| `drift_slow` | `drift` | 0.20 | 0.65 | Slow, wide, gentle drift |
+| `orbit_slow` | `orbit` | 0.25 | 0.55 | Slow smooth orbit |
+| `orbit_mid` | `orbit` | 0.45 | 0.55 | Medium orbit, same width |
+| `tight_static` | `static` | — | 0.25 | Centered, no motion |
+| `fragment_soft` | `fragment` | 0.35 | 0.45 | Soft fragmented jumps |
+| `orbit_var` | `orbit` | 0.55 | 0.60 | Faster orbit with jitter |
+| `orbit_pulse` | `orbit_pulse` | 0.52 | 0.42 | Pulsing orbit |
+| `jump_cut` | `jump_cut` | 0.70 | 0.38 | Fast, narrow, sharp cuts |
+| `cluster_rotate` | `cluster_rotate` | 0.30 | 0.62 | Slow cluster rotation |
+
+### Mode defaults
+
+`spatial_pattern_id` is required by every mode. The fallback chain is:
+
+1. Model-emitted `spatial_pattern_id` (if it resolves)
+2. `ModeContract.defaultPicksByMode[mode].spatialPatternId`
+3. Hardcoded `"drift_slow"`
+
+The mode defaults from `ModeContract` map to the following patterns:
+
+| Mode | Description | Default `spatial_pattern_id` |
+|---|---|---|
+| 0 | Clean | `drift_slow` |
+| 1 | Beat Repeat | `orbit_pulse` |
+| 2 | Granulator | `fragment_soft` |
+| 3 | Roar/Resonator | `orbit_slow` |
+| 4 | Clean + samples | `orbit_pulse` |
+| 5 | MIDI-resonification wet-only | `cluster_rotate` |
+| 6 | Parallel dry + resonifier | `orbit_mid` |
+| 7 | Swap Buckets | `orbit_var` |
+| 8 | Spatial dry + diffuse verb | `orbit_slow` |
+| 9 | 3-band spatial split | `orbit_mid` |
+| 10 | (reserved) | `drift_slow` |
+
+<Info>
+Key lookup for `spatial_pattern_id` is case-insensitive. `"Orbit_Slow"` resolves to `"orbit_slow"` if the exact key is absent. A fallback note is only appended when the resolved ID differs from what was originally in the pick.
+</Info>
+
+### Swift struct
+
+```swift
+struct SpatialPatternManifestEntry: Codable, Equatable {
+    let algo: SpatialPatternAlgo   // .drift | .orbit | .static | .fragment
+                                   // | .orbitPulse | .jumpCut | .clusterRotate
+    let speed: Double?
+    let spread: Double?
+    let jumpProb: Double?
+    let jitter: Double?
+}
+```
+
+JSON key `"jump_prob"` decodes to `jumpProb` via `.convertFromSnakeCase`.
+
+---
+
+## Related
+
+- [Manifests & Routing Overview](/manifests/overview) — how all five manifests load and how the full resolution fallback chain works
+- [Instruments Manifest](/manifests/instruments) — sampler instrument entries and `midi_inst_id` resolution
+- [Mode contract reference](/reference/mode-contract) — per-mode required picks, bounds, and defaults
+- [Packet types](/reference/packet-types) — the `Picks` struct wire format and all pick field definitions

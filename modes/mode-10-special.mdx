@@ -1,0 +1,89 @@
+---
+title: "Mode 10: Special"
+description: "Scene-driven special mode with configurable cycle length, chaos, blend, and stability."
+---
+
+Mode 10 is a scene-based special mode. Unlike the other DSP modes, its behavior is primarily governed by the selected `scene_id` and the scene cycle length `scene_len_s`. The four parameters control macro-level qualities of the scene: how long it runs before cycling (`scene_len_s`), how much unpredictable variation is introduced (`chaos`), how much the scene blends with its surroundings (`blend`), and how resistant the scene is to disruption (`stability`).
+
+## Required picks
+
+In addition to the universal `preset_id` and `spatial_pattern_id` picks, Mode 10 requires:
+
+| Pick | Description |
+|------|-------------|
+| `scene_id` | Identifies the scene definition to run. Missing `scene_id` is a hard contract violation. |
+
+A missing `scene_id` triggers the contract enforcement path and causes the engine to apply safe defaults for the entire mode. See [reference/mode-contract](/reference/mode-contract) for the hard-violation fallback rules.
+
+## Scene cycle length
+
+`scene_len_s` controls how many seconds the scene runs before cycling. A "cycle" in Mode 10 is a full pass through the scene's internal state machine — at the end of a cycle, the scene can restart, morph, or hand off to a new configuration depending on the scene definition.
+
+<Info>
+`scene_len_s` is not a loop length in the audio sense — it does not necessarily produce a repeating audio loop of that duration. It controls the pace of the scene's internal progression. Short values (`8–15 s`) make the scene evolve quickly; long values (`60–90 s`) allow the scene to settle into a stable state for extended periods.
+</Info>
+
+## Parameters
+
+<ParamField path="scene_len_s" type="float">
+  Duration of one full scene cycle, in seconds. Range: 8–90 s. Safe default: `24`. Lower values produce more frequent scene transitions and faster internal evolution. Higher values allow the scene to breathe and develop slowly. Values outside `[8, 90]` are clamped.
+</ParamField>
+
+<ParamField path="chaos" type="float">
+  Amount of unpredictable variation injected into the scene. Range: 0–1 (normalized). Safe default: `0.55`. Higher chaos values introduce more randomness into scene progression, parameter modulation, and event timing within the scene. At `0.0` the scene follows its most deterministic path; at `1.0` the scene behavior is maximally variable.
+</ParamField>
+
+<ParamField path="blend" type="float">
+  Controls how much the scene blends with adjacent or layered material. Range: 0–1 (normalized). Safe default: `0.58`. The precise meaning of `blend` is scene-specific, but generally higher values produce more overlap and integration with surrounding content, while lower values keep the scene more isolated and distinct.
+</ParamField>
+
+<ParamField path="stability" type="float">
+  Resistance to disruption — how strongly the scene maintains its current state against incoming signals and model-driven changes. Range: 0–1 (normalized). Safe default: `0.62`. Higher stability means the scene holds its shape longer and resists rapid parameter fluctuation. Lower stability allows the scene to respond more immediately to input energy and model output changes.
+</ParamField>
+
+## Safe defaults
+
+```json
+{
+  "scene_len_s": 24.0,
+  "chaos": 0.55,
+  "blend": 0.58,
+  "stability": 0.62
+}
+```
+
+## Default picks
+
+```json
+{
+  "preset_id": "special_01",
+  "spatial_pattern_id": "orbit_var",
+  "scene_id": "special_01"
+}
+```
+
+<Note>
+`scene_id` is present in both the required picks and the default picks. The default `scene_id = "special_01"` is used when the model does not provide a `scene_id` pick. If the model sends an unknown `scene_id` value, the contract enforcement layer falls back to the default for the current mode — it does not fail hard on unknown scene IDs (unlike missing scene IDs, which are hard violations).
+</Note>
+
+## Legacy aliases
+
+The following legacy param name is accepted and rescaled to its canonical counterpart:
+
+| Legacy name | Canonical name | Transform |
+|-------------|---------------|-----------|
+| `scene_len` | `scene_len_s` | `linear(8.0, 90.0)` |
+
+All other params (`chaos`, `blend`, `stability`) have no legacy aliases — send canonical names only.
+
+## Contract notes
+
+<Warning>
+Mode 10 is not included in the per-mode ear verification checklist in the README. This means there is no established audio regression target for this mode. When making changes that affect Mode 10, exercise additional caution and verify behavior manually against the scene definition. Contract fingerprint validation still applies — any change to Mode 10's params, bounds, or defaults requires a fingerprint update.
+</Warning>
+
+## See also
+
+- [Modes overview](/modes/overview)
+- [reference/mode-contract](/reference/mode-contract) — contract validation, required picks, and hard-violation fallback
+- [reference/param-bounds](/reference/param-bounds) — full bounds table for all modes

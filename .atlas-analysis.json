@@ -1,0 +1,123 @@
+{
+  "projectType": "general",
+  "projectName": "The Tub Harness",
+  "projectDescription": "A macOS SwiftUI app that acts as the real-time audio processing harness for THE TUB, communicating with an external ML model server over UDP at 10 Hz to drive 11 DSP modes and log training data.",
+  "theme": "aspen",
+  "primaryColor": "#1E3A4F",
+  "lightColor": "#2E5B7A",
+  "darkColor": "#0F1F2B",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "DSP Modes",
+            "pages": [
+              "modes/overview",
+              "modes/mode-0-clean",
+              "modes/mode-1-beat-repeat",
+              "modes/mode-2-granulator",
+              "modes/mode-3-roar-resonator",
+              "modes/mode-4-clean-samples",
+              "modes/mode-5-midi-resonification",
+              "modes/mode-6-parallel-dry",
+              "modes/mode-7-swap-buckets",
+              "modes/mode-8-spatial-dry",
+              "modes/mode-9-3band-spatial",
+              "modes/mode-10-special"
+            ]
+          },
+          {
+            "group": "Running & Replay",
+            "pages": [
+              "running/live-run",
+              "running/replay-mode",
+              "running/session-artifacts"
+            ]
+          },
+          {
+            "group": "Manifests & Routing",
+            "pages": [
+              "manifests/overview",
+              "manifests/instruments",
+              "manifests/banks-and-samples"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Protocol Contract",
+            "pages": [
+              "reference/mode-contract",
+              "reference/packet-types",
+              "reference/param-bounds",
+              "reference/visual-head"
+            ]
+          },
+          {
+            "group": "Log Schema",
+            "pages": [
+              "reference/log-schema",
+              "reference/session-metadata",
+              "reference/events-log"
+            ]
+          },
+          {
+            "group": "Safety Rails & Testing",
+            "pages": [
+              "reference/safety-rails",
+              "reference/testing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "11 real-time DSP modes (0–10) driven by ML model output over UDP at 10 Hz",
+    "Protocol v2 contract with pinned fingerprint and strict packet decoding",
+    "Manifest-backed routing for instruments, banks, chords, motifs, and spatial patterns",
+    "JSONL training substrate logging (frames, events, session metadata) at 10 Hz",
+    "Session replay with optional audio injection and speed control",
+    "Audio safety rails: reverb wet ≤ 0.50, master limiter at −1 dBFS, per-mode voice caps",
+    "4-panel SwiftUI control room UI with live human labels (good/too_much/too_flat)",
+    "Visual stage rendered at 24 Hz using SwiftUI Canvas with Metal shaders",
+    "Headless replay via CLI args and UI replay by session ID",
+    "Input audio recording to CAF/WAV for training data collection"
+  ],
+  "publicApiSurface": [
+    "TubMLClient.startLoop(recordInputAudio:replayMode:replayedSessionId:runMode:)",
+    "TubMLClient.stopLoop()",
+    "TubMLClient.setMode(_:)",
+    "TubMLClient.pulseJolt()",
+    "TubMLClient.pulseClear()",
+    "TubMLClient.setJoltHeld(_:)",
+    "TubMLClient.setHumanLabel(_:)",
+    "TubMLClient.reconfigureEndpoint(host:port:)",
+    "TubMLClient.replayTrace(inputPath:fasterThanRealtime:speedMultiplier:bundleIdOverride:completion:)",
+    "ModeContract.enforceIncoming(modelOut:currentMode:)",
+    "ModeContract.safeDefaults(mode:tsMs:contractViolation:)",
+    "ModeContract.contractLockStatus()",
+    "ModeContract.clamp(params:mode:)",
+    "ModeContract.validate(picks:mode:)",
+    "ModeContract.sanitize(visual:mode:)",
+    "ModelIn (protocol v2 packet)",
+    "ModelOut (protocol v2 packet)",
+    "Features (audio feature vector)",
+    "Picks (manifest-backed routing picks)",
+    "VisualOut (visual head for stage rendering)",
+    "ManifestCatalog.shared.resolve(mode:picks:)"
+  ]
+}

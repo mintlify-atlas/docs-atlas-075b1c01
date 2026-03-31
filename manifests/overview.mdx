@@ -1,0 +1,133 @@
+---
+title: "Manifests & Routing Overview"
+description: "How The Tub Harness loads JSON manifests at startup and resolves picks against them for every audio mode."
+keywords: ["manifests", "routing", "ManifestCatalog", "picks", "banks", "instruments", "chords", "spatial patterns"]
+---
+
+Manifest-backed routing is how The Tub Harness maps symbolic IDs — emitted by the ML model as picks — to concrete audio assets and DSP parameters. All five manifest files live at `TheTubHarness/TheTubHarness/Manifests/` inside the app bundle and are loaded once at startup by `ManifestCatalog`.
+
+## What manifests are and why they exist
+
+The ML model output (`ModelOut`) carries a `Picks` struct with string IDs like `bank_id`, `midi_inst_id`, and `spatial_pattern_id`. These IDs are intentionally symbolic: they let the model make routing decisions without encoding asset paths or DSP numbers directly. The manifest files are the lookup tables that give those IDs meaning.
+
+This separation means you can:
+
+- Swap or extend audio assets without retraining the model
+- Keep the protocol contract stable while the asset library grows
+- Validate at startup that every mode's defaults resolve cleanly before any audio plays
+
+## How ManifestCatalog loads at startup
+
+`ManifestCatalog.shared` is a singleton initialized when the app launches via `loadDefault()`. It searches for the manifest directory in this priority order:
+
+1. The `TUB_MANIFESTS_DIR` environment variable (useful for tests and replay)
+2. `Bundle.main.resourceURL` and its `Manifests/` subdirectory
+3. The source-relative `Manifests/` directory next to `ManifestCatalog.swift`
+
+A directory is accepted only if `banks.json`, `instruments.json`, and `spatial_patterns.json` are all readable. If no valid directory is found, the catalog falls back to hardcoded runtime defaults and logs a warning.
+
+```swift
+// Called automatically at first access — no explicit initialization needed
+let catalog = ManifestCatalog.shared
+catalog.logValidationSummary(context: "startup")
+```
+
+After loading, the catalog runs `validateModeDefaults(...)` against all 11 modes (0–10). Any mode whose default picks reference an ID that doesn't exist in the manifest tables produces a warning. Warnings are surfaced via `logValidationSummary` and are visible in Xcode's console on startup.
+
+<Warning>
+A missing default pick is not a crash, but it will cause that mode to fall back to its hardcoded minimum-safe value. Always resolve validation warnings before shipping a build.
+</Warning>
+
+## The five manifest files
+
+| File | Pick field | Used by modes |
+|---|---|---|
+| `banks.json` | `bank_id` / `sample_id` | 4, 9 |
+| `instruments.json` | `midi_inst_id` | 5, 6, 9 |
+| `chords.json` | `chord_set_id` | 5, 6 |
+| `motifs.json` | `motif_id` | (all MIDI modes) |
+| `spatial_patterns.json` | `spatial_pattern_id` | all modes |
+
+### banks.json
+
+Sound banks indexed by a string key. Each bank has a `type` (`samples`, `midi_phrases`, or `particles`) and an `assets` array. Assets carry individual `id` values that `sample_id` resolves against. Example banks: `samples_A`, `phrases_A`, `particles_A`.
+
+### instruments.json
+
+Sampler instruments indexed by a string key. Every entry must have `"type": "sampler"` and at least one source path. Used by the MIDI-resonification modes (5 and 6) and the 3-band spatial split (mode 9). Example instruments: `inst_A`, `inst_B`, `inst_C`, `inst_D`, `inst_E`, `inst_P`.
+
+### chords.json
+
+Chord sets indexed by a string key. Each entry defines a `key` (tonic label) and an `intervals` array (semitone offsets from root). Used to constrain MIDI note generation in modes 5 and 6. Default: `cs_neutral`.
+
+### motifs.json
+
+Melodic motif patterns indexed by a string key. Each entry carries `notes` (semitone intervals), `durations_ms`, and an optional `velocity_scale`. Used by MIDI-active modes to sequence short melodic figures.
+
+### spatial_patterns.json
+
+Spatial movement algorithms indexed by a string key. Every mode requires a valid `spatial_pattern_id`. Each entry defines an `algo` and optional shaping parameters (`speed`, `spread`, `jump_prob`, `jitter`). Available algorithms: `drift`, `orbit`, `static`, `fragment`, `orbit_pulse`, `jump_cut`, `cluster_rotate`.
+
+## How picks resolve
+
+`ManifestCatalog.shared.resolve(mode:picks:)` is the single entry point for translating raw picks into concrete routing. It accepts the current mode integer and a `Picks` struct, and returns a `PicksResolution` containing:
+
+- **`picks`** — a fully resolved `Picks` struct with all blanks filled in
+- **`routing`** — a `ResolvedManifestRouting` with the actual `BankManifestEntry`, `BankAsset`, `InstrumentManifestEntry`, and `SpatialPatternManifestEntry` objects
+- **`notes`** — a list of human-readable strings describing every fallback that was applied
+
+```swift
+let resolution = ManifestCatalog.shared.resolve(mode: currentMode, picks: modelOut.picks)
+
+// Use resolved picks for DSP parameters
+let spatialPattern = resolution.routing.spatialPattern
+let instrument     = resolution.routing.instrument
+let bankAsset      = resolution.routing.bankAsset
+
+// Log any fallbacks that occurred
+for note in resolution.notes {
+    print("[routing] \(note)")
+}
+```
+
+### Resolution rules per pick field
+
+| Pick field | Required by | Fallback chain |
+|---|---|---|
+| `spatial_pattern_id` | all modes | mode default → `"drift_slow"` |
+| `bank_id` | modes that require it | mode default → first sorted key → placeholder |
+| `sample_id` | modes that require it | bank's `default_sample_id` → first asset → placeholder |
+| `midi_inst_id` | modes 5, 6, 9 | mode default → first sorted key → placeholder |
+| `chord_set_id` | modes 5, 6 | mode default → first sorted key → `"cs_neutral"` |
+| `preset_id` | mode-dependent | mode default → `"fallback_<mode>"` |
+| `grid_div` | mode 1 | mode default → `"1/8"` |
+| `repeat_style_id` | mode 1 | mode default → `"stutter_a"` |
+| `gesture_type_id` | mode 4 | mode default → `"call_response"` |
+| `mapping_id` | mode 7 | mode default → `"swap_pairs"` |
+
+Key lookup is case-insensitive: `"Inst_A"` resolves to `"inst_A"` if the exact key is absent. This prevents case drift in model output from causing spurious fallbacks.
+
+## What happens on a missing ID
+
+When a pick ID is not found in its manifest table, `resolve` does not throw. Instead:
+
+1. It selects a deterministic fallback from `ModeContract.defaultPicksByMode[mode]`
+2. If the mode default also fails to resolve, it falls to the first alphabetically sorted key, then a hardcoded placeholder string
+3. A human-readable note is appended to `PicksResolution.notes`
+
+The fallback is always deterministic and reproducible for a given mode, so replay sessions behave identically to the original recording even if manifests are updated.
+
+<Note>
+All fallback messages appear in the `notes` array on `PicksResolution`. Route these to your session event log during development so you can identify which mode/ID combinations are generating fallbacks.
+</Note>
+
+## Deep-dive pages
+
+<CardGroup cols={2}>
+  <Card title="Instruments manifest" icon="music" href="/manifests/instruments">
+    Full field reference for instruments.json, sampler source types, and shaping metadata. Covers which modes use midi_inst_id and default IDs per mode.
+  </Card>
+  <Card title="Banks, chords, motifs & spatial patterns" icon="sliders" href="/manifests/banks-and-samples">
+    How banks, chord sets, motif patterns, and spatial movement algorithms are structured and which modes depend on each.
+  </Card>
+</CardGroup>

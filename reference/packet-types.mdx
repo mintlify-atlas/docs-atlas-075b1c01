@@ -1,0 +1,352 @@
+---
+title: "Packet Types"
+description: "Wire format reference for all JSON packet types exchanged between the harness and model server."
+keywords: ["ModelIn", "ModelOut", "Features", "Buttons", "HarnessState", "Flags", "Picks", "VisualOut", "wire format"]
+---
+
+All packets are exchanged as JSON over UDP at 10 Hz. Field names on the wire use `snake_case`; Swift structs use `camelCase`. The decoder is configured with `JSONDecoder.convertFromSnakeCase`. Every struct enforces strict unknown key rejection — any unrecognised key in any packet throws a `DecodingError`.
+
+<Tabs>
+  <Tab title="ModelIn">
+
+## ModelIn
+
+The frame packet the harness sends to the model server at 10 Hz. Contains protocol metadata, session context, audio features, and harness state.
+
+```json
+{
+  "protocol_version": 2,
+  "ts_ms": 1743417600000,
+  "session_id": "sess_abc123",
+  "frame_hz": 10,
+  "mode": 3,
+  "buttons": { "jolt": false, "clear": false },
+  "features": {
+    "loudness_lufs": -18.4,
+    "onset_rate_hz": 2.1,
+    "spec_centroid_hz": 3200.0,
+    "band_low": 0.62,
+    "band_mid": 0.44,
+    "band_high": 0.28,
+    "noisiness": 0.31,
+    "pitch_hz": 220.0,
+    "pitch_conf": 0.87,
+    "key_estimate": "A",
+    "key_conf": 0.72
+  },
+  "state": {
+    "overload": false,
+    "cooldown": 0.0,
+    "last_mode_ms": 12500
+  }
+}
+```
+
+<ParamField path="protocol_version" type="number" required>
+  Must be `2`. Packets with any other value are rejected at decode.
+</ParamField>
+
+<ParamField path="ts_ms" type="number" required>
+  Unix timestamp in milliseconds at the time the frame was assembled.
+</ParamField>
+
+<ParamField path="session_id" type="string" required>
+  Unique session identifier. Scopes logs and model context for the current recording session.
+</ParamField>
+
+<ParamField path="frame_hz" type="number" default="10">
+  Frame rate the harness is running at. Always `10` in normal operation.
+</ParamField>
+
+<ParamField path="mode" type="number" required>
+  Current DSP mode, `0–10`. Set by the UI switch; never changed by the model server.
+</ParamField>
+
+<ParamField path="buttons" type="object" required>
+  Physical button state snapshot. See [Buttons](#buttons) below.
+</ParamField>
+
+<ParamField path="features" type="object" required>
+  Audio feature vector extracted from the current frame. See [Features](#features) below.
+</ParamField>
+
+<ParamField path="state" type="object">
+  Optional harness health state. See [HarnessState](#harnessstate) below.
+</ParamField>
+
+  </Tab>
+  <Tab title="ModelOut">
+
+## ModelOut
+
+The response packet the model server returns for each `ModelIn` frame. Contains DSP parameters, picks, behavioural flags, and the visual head.
+
+```json
+{
+  "protocol_version": 2,
+  "ts_ms": 1743417600042,
+  "mode": 3,
+  "params": {
+    "drive": 0.52,
+    "bit_depth_bits": 12.0,
+    "downsample_amt": 0.44,
+    "res_shift": 0.64,
+    "tone_db": -3.0
+  },
+  "picks": {
+    "preset_id": "res_default",
+    "spatial_pattern_id": "orbit_slow"
+  },
+  "flags": {
+    "request_cooldown": false,
+    "prefer_stability": true,
+    "thin_events": false,
+    "reset_voices": false
+  },
+  "visual": {
+    "scene_id": "fault_lattice",
+    "density": 0.44,
+    "cohesion": 0.50,
+    "disruption": 0.68,
+    "token_salience": 0.48,
+    "wordmark_integrity": 0.50,
+    "decay_ms": 920,
+    "flash_bias": 0.44,
+    "anchor_weights": [0.24, 0.28, 0.48],
+    "thought": "routing_signal",
+    "thought_log": ["idle", "listening", "routing_signal"]
+  }
+}
+```
+
+<ParamField path="protocol_version" type="number" required>
+  Must be `2`. Any other value triggers a hard contract violation and safe defaults are applied.
+</ParamField>
+
+<ParamField path="ts_ms" type="number" required>
+  Timestamp in milliseconds, echoed or set by the model server.
+</ParamField>
+
+<ParamField path="mode" type="number" required>
+  Must match the mode the harness sent in `ModelIn`. A mismatch is a hard contract violation.
+</ParamField>
+
+<ParamField path="params" type="object">
+  Map of param name → value for the current mode. Values are clamped to per-mode bounds by `ModeContract.enforceIncoming`. Non-finite values and unknown param names are hard violations. See [Parameter Bounds](/reference/param-bounds).
+</ParamField>
+
+<ParamField path="picks" type="object">
+  Manifest selections for the current mode. All required picks must be present and non-empty; missing picks are hard violations. See [Picks](#picks) below.
+</ParamField>
+
+<ParamField path="flags" type="object">
+  Behavioural hints from the model server. See [Flags](#flags) below.
+</ParamField>
+
+<ParamField path="visual" type="object" required>
+  Visual head output. Required in protocol v2; absence is a decode error. See [Flags](#flags) and [Visual Head](/reference/visual-head).
+</ParamField>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Buttons
+
+Button state snapshot included in every `ModelIn`.
+
+```json
+{ "jolt": false, "clear": false }
+```
+
+<ParamField path="jolt" type="boolean" default="false">
+  `true` when the Jolt button is held. Signals a one-shot intensity spike to the model.
+</ParamField>
+
+<ParamField path="clear" type="boolean" default="false">
+  `true` when the Clear button is held. Triggers a reset/clear hint to the model; the model may return `flags.reset_voices: true` in response.
+</ParamField>
+
+---
+
+## Features
+
+Audio feature vector extracted by the harness from the current 100 ms frame. Included in every `ModelIn`.
+
+<Note>
+`Features.silence` is a static constant representing a silent frame: `loudness_lufs: -80`, all band levels `0`, `pitch_hz: nil`, `pitch_conf: 0`, `key_estimate: nil`, `key_conf: 0`. Used as a safe initializer when no audio is available.
+</Note>
+
+<ParamField path="loudness_lufs" type="number" required>
+  Integrated loudness in LUFS. Typically in the range `−80` to `0`.
+</ParamField>
+
+<ParamField path="onset_rate_hz" type="number" required>
+  Detected onset rate in onsets per second.
+</ParamField>
+
+<ParamField path="spec_centroid_hz" type="number" required>
+  Spectral centroid in Hz. Measures the "brightness" of the audio spectrum.
+</ParamField>
+
+<ParamField path="band_low" type="number" required>
+  Normalised energy in the low frequency band `[0, 1]`.
+</ParamField>
+
+<ParamField path="band_mid" type="number" required>
+  Normalised energy in the mid frequency band `[0, 1]`.
+</ParamField>
+
+<ParamField path="band_high" type="number" required>
+  Normalised energy in the high frequency band `[0, 1]`.
+</ParamField>
+
+<ParamField path="noisiness" type="number" required>
+  Spectral noisiness/flatness measure `[0, 1]`. `0` = tonal, `1` = noise-like.
+</ParamField>
+
+<ParamField path="pitch_hz" type="number">
+  Fundamental frequency in Hz. `null` when no pitch is detected.
+</ParamField>
+
+<ParamField path="pitch_conf" type="number" default="0">
+  Pitch detection confidence `[0, 1]`. Clamped to `[0, 1]` on decode.
+</ParamField>
+
+<ParamField path="key_estimate" type="string">
+  Estimated musical key (e.g. `"A"`, `"C#"`). `null` when not estimated.
+</ParamField>
+
+<ParamField path="key_conf" type="number" default="0">
+  Key estimate confidence `[0, 1]`. Clamped to `[0, 1]` on decode.
+</ParamField>
+
+---
+
+## HarnessState
+
+Optional health context included in `ModelIn`. Helps the model make informed decisions during overload or cooldown.
+
+<ParamField path="overload" type="boolean" default="false">
+  `true` when the audio engine is in an overload condition.
+</ParamField>
+
+<ParamField path="cooldown" type="number" default="0.0">
+  Fractional cooldown progress `[0, 1]`. `0` = no cooldown active, `1` = fully cooled down.
+</ParamField>
+
+<ParamField path="last_mode_ms" type="number" default="0">
+  Milliseconds elapsed since the last mode switch.
+</ParamField>
+
+---
+
+## Flags
+
+Behavioural hints returned by the model server in `ModelOut`. All fields are optional and default to `false` (except `prefer_stability` which defaults to `true`).
+
+<ParamField path="request_cooldown" type="boolean" default="false">
+  Model requests a cooldown phase from the harness.
+</ParamField>
+
+<ParamField path="prefer_stability" type="boolean" default="true">
+  Model prefers stable, lower-variance parameter output this frame.
+</ParamField>
+
+<ParamField path="thin_events" type="boolean" default="false">
+  Model requests reduced event logging density. Automatically set to `true` by the harness when a hard contract violation occurs and safe defaults are applied.
+</ParamField>
+
+<ParamField path="reset_voices" type="boolean" default="false">
+  Model requests that the audio engine reset all active voices. Typically triggered by a CLEAR button press.
+</ParamField>
+
+---
+
+## Picks
+
+Manifest selections returned in `ModelOut`. All fields are optional strings or scalars, but a per-mode subset is **required** — missing required picks are hard contract violations. See [Mode Contract](/reference/mode-contract) for the required picks table.
+
+<ParamField path="preset_id" type="string">
+  Preset identifier. Required for all modes.
+</ParamField>
+
+<ParamField path="spatial_pattern_id" type="string">
+  Spatial pattern identifier. Required for all modes.
+</ParamField>
+
+<ParamField path="bank_id" type="string">
+  Sample bank identifier. Required for mode 4.
+</ParamField>
+
+<ParamField path="sample_id" type="string">
+  Sample identifier within the bank. Required for mode 4.
+</ParamField>
+
+<ParamField path="midi_inst_id" type="string">
+  MIDI instrument identifier. Required for modes 5 and 6.
+</ParamField>
+
+<ParamField path="chord_set_id" type="string">
+  Chord set identifier. Required for modes 5 and 6.
+</ParamField>
+
+<ParamField path="scene_id" type="string">
+  Scene identifier for mode 10 special scenes. Required for mode 10.
+</ParamField>
+
+<ParamField path="grid_div" type="string">
+  Grid division (e.g. `"1/8"`). Required for mode 1.
+</ParamField>
+
+<ParamField path="repeat_style_id" type="string">
+  Repeat style. Required for mode 1.
+</ParamField>
+
+<ParamField path="motif_id" type="string">
+  Motif identifier. Optional.
+</ParamField>
+
+<ParamField path="articulation_id" type="string">
+  Articulation style (e.g. `"legato"`, `"short"`). Optional.
+</ParamField>
+
+<ParamField path="mapping_id" type="string">
+  Bucket mapping identifier for mode 7. Optional.
+</ParamField>
+
+<ParamField path="mapping_family" type="string">
+  Mapping family string (e.g. `"bucket_swap"`). Optional.
+</ParamField>
+
+<ParamField path="category_id" type="string">
+  Category hint for mode 4 gesture selection. Optional.
+</ParamField>
+
+<ParamField path="gesture_type_id" type="string">
+  Gesture type identifier for mode 4. Optional.
+</ParamField>
+
+<ParamField path="variance_amt" type="number">
+  Variance amount scalar. Optional.
+</ParamField>
+
+<ParamField path="variant_seed" type="number">
+  Integer seed for variant selection. Optional.
+</ParamField>
+
+---
+
+## Wire format notes
+
+- **Encoding**: JSON, UTF-8, over UDP.
+- **Frame rate**: 10 Hz (`ModelIn` → `ModelOut` round trip).
+- **Key casing**: `snake_case` on the wire; `JSONDecoder.convertFromSnakeCase` maps to Swift `camelCase`.
+- **Strict decode**: Every struct uses `assertNoUnknownKeys`. Unknown keys throw `DecodingError.dataCorrupted`.
+- **Mode validation**: `mode` out of `0...10` throws `DecodingError.dataCorrupted` at decode time via `requireMode0to10`.
+- **Protocol version**: Checked immediately after decoding `protocol_version`. Non-`2` values throw at the packet level before any further processing.
+
+---
+
+**Related pages:** [Mode Contract](/reference/mode-contract) · [Parameter Bounds](/reference/param-bounds) · [Visual Head](/reference/visual-head)

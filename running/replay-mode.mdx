@@ -1,0 +1,145 @@
+---
+title: "Replay Mode"
+description: "Replay a recorded trace headlessly via the CLI or by session ID from the app UI, with optional audio injection and speed control."
+keywords: ["replay", "headless", "CLI", "session ID", "audio injection", "golden trace"]
+---
+
+The harness supports two replay paths: a **headless CLI** that feeds a `.jsonl` trace file through the model server and writes a new output trace, and a **UI replay** that loads a session by ID and optionally reinjects its recorded input audio.
+
+<Tabs>
+  <Tab title="CLI replay">
+
+## Building the binary
+
+Replay runs against a compiled binary, not through Xcode's run button. Build first:
+
+```bash
+xcodebuild \
+  -scheme TheTubHarness \
+  -project /Users/seb/the-tub-harness/TheTubHarness/TheTubHarness.xcodeproj \
+  -destination 'platform=macOS' \
+  build
+```
+
+<Steps>
+  <Step title="Locate the compiled binary">
+    ```bash
+    APP_BIN=$(find ~/Library/Developer/Xcode/DerivedData \
+      -path '*TheTubHarness.app/Contents/MacOS/TheTubHarness' | head -n 1)
+    ```
+  </Step>
+  <Step title="Start the model server">
+    The model server must be running before replay begins. Replay sends each frame to the model over UDP and records the response, so a live server endpoint is required.
+
+    ```bash
+    cd /Users/seb/the-tub-ml
+    source .venv/bin/activate
+    tub-ml serve --config configs/stub_policy_v1.yaml
+    ```
+  </Step>
+  <Step title="Run replay">
+    ```bash
+    "$APP_BIN" \
+      --replay /Users/seb/the-tub-harness/fixtures/golden_trace.jsonl \
+      --speed 0 \
+      --out /tmp/the-tub-replay-out.jsonl
+    ```
+  </Step>
+  <Step title="Inspect output">
+    The output file contains one JSON object per replayed frame, in the same schema as a live `frames_*.jsonl` log. When replay completes, the binary prints a summary line to stdout:
+
+    ```json
+    {"event":"replay_complete","input":"...","output":"...","speed":0,"host":"127.0.0.1","port":9910}
+    ```
+  </Step>
+</Steps>
+
+## CLI arguments
+
+| Argument | Required | Description |
+|---|---|---|
+| `--replay <path>` | Yes | Path to the input `.jsonl` trace file to replay |
+| `--speed <float>` | No | Playback speed multiplier (default `1.0`) |
+| `--out <path>` | No | Path to write the output `.jsonl` trace |
+| `--bundle-id <id>` | No | Override the bundle ID stamped on output lines |
+| `--host <ip>` | No | Model server host (default `127.0.0.1`, env: `MODEL_HOST`) |
+| `--port <udp_port>` | No | Model server UDP port (default `9910`, env: `MODEL_PORT`) |
+
+## Speed values
+
+| Value | Behavior |
+|---|---|
+| `0` | As fast as possible — no inter-frame delay |
+| `1.0` | Recorded cadence — frames are paced to match the original timestamps |
+| `> 1.0` | Accelerated — faster than real time but still paced |
+
+Use `--speed 0` for integration tests where wall time does not matter.
+
+## Bundle ID override
+
+If `--bundle-id` is provided, every output line uses that bundle ID. If omitted, the replayer preserves whatever bundle ID was present in each input trace line.
+
+<Note>
+If `--out` points to a path that is blocked by the app sandbox (for example, an arbitrary `/tmp` path on a sandboxed build), the replayer falls back to writing the output to the app log directory and prints a warning to stderr:
+
+```
+warn: cannot write requested --out path in current app sandbox; using app support logs path instead
+```
+
+The `replay_complete` event will reflect the actual output path used.
+</Note>
+
+  </Tab>
+  <Tab title="UI replay">
+
+## Replaying by session ID
+
+The app UI can replay any previously recorded session by its ID, optionally reinjecting the recorded input audio into the same processing path used during a live session.
+
+<Steps>
+  <Step title="Enter the session ID">
+    In the UI, type the session ID (e.g. `session_1711234567890`) into the **Replay session_id** field.
+  </Step>
+  <Step title="Optionally seek">
+    Enter an offset in seconds into the **Seek Replay** field to start playback from a point other than the beginning.
+  </Step>
+  <Step title="Start replay">
+    Click **Start Replay**. The replayer loads `session_meta_<session_id>.json` and the corresponding frame and event logs.
+  </Step>
+  <Step title="Stop replay">
+    Click **Stop Replay** to cancel at any point.
+  </Step>
+</Steps>
+
+## Audio injection behavior
+
+If `input_<session_id>.caf` (or `.wav`) exists in the session directory, the replayer injects that file into the same input bus path used by the live mic/line input. Frame playback is then paced against replay-audio time using the recorded frame timestamps, so the audio and frame stream stay in sync.
+
+If the input audio file is missing, replay continues without it — the frame-stream still plays back, and the harness logs:
+
+```json
+{"replay_audio_missing": true, ...}
+```
+
+This flag is also persisted to `session_meta_<session_id>.json` under `replay_audio_missing`.
+
+  </Tab>
+</Tabs>
+
+## Golden trace integration test
+
+The golden trace test exercises the full replay pipeline against the model server and verifies that output matches expected values. Requires the model server running on `localhost:9910`.
+
+```bash
+cd /Users/seb/the-tub-harness
+RUN_GOLDEN_TRACE=1 MODEL_HOST=127.0.0.1 MODEL_PORT=9910 \
+  xcodebuild \
+    -scheme TheTubHarness \
+    -project TheTubHarness/TheTubHarness.xcodeproj \
+    -destination 'platform=macOS' \
+    -only-testing:TheTubHarnessTests test
+```
+
+The golden trace file lives at `fixtures/golden_trace.jsonl`. Updating this file requires a deliberate review — it encodes the expected behavior of both the harness and the model contract.
+
+See [Session Artifacts](/running/session-artifacts) for details on the output schema produced by replay.

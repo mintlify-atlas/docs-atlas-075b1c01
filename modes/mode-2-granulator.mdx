@@ -1,0 +1,83 @@
+---
+title: "Mode 2: Granulator"
+description: "Discontinuous \"shattered time\" texture from live input. Density responds quickly; freeze probability introduces held grain clouds."
+---
+
+## Overview
+
+Mode 2 slices the live input into grains and scatters them in time and pitch. The result is a discontinuous, textural version of the source — the original material is still recognizable but fragmented into a shimmering, evolving cloud.
+
+`grain_density` is the primary energy control: it responds quickly and shapes how thick the grain texture is. `freeze_prob` introduces moments where a grain cloud is held and sustained, creating suspended "frozen" textures above the continuing granular stream.
+
+**Default picks:** `preset_id=fracture`, `spatial_pattern_id=fragment_soft`
+
+<Note>
+  The `preset_id` affects voicing behavior: presets containing `shimmer` raise wet and reverb scales (`×1.08`/`×1.05`) and allow longer freeze durations (up to `2.4 s`). Presets containing `soft` or `intelligible` reduce wet and reverb scales (`×0.88`/`×0.85`) and cap freeze at `2.0 s`. All other presets use unity scaling and cap freeze at `2.8 s`.
+</Note>
+
+## Parameters
+
+<ParamField path="grain_size_ms" type="float">
+  Size of each grain in milliseconds. Range: `12–120 ms`. Safe default: `28 ms`. Small grains (`12–30 ms`) produce a fine, glassy texture; larger grains (`60–120 ms`) retain more of the source character and feel more melodic or speech-like.
+</ParamField>
+
+<ParamField path="grain_density" type="float">
+  Density of the grain cloud — how many grains are active per unit time. Range: `0.1–0.9`. Safe default: `0.62`. Low values produce a sparse, intermittent texture with audible silence between grains; high values create a dense, continuous cloud. This parameter responds quickly to model updates.
+</ParamField>
+
+<ParamField path="scan_rate" type="float">
+  Speed at which the read head scans through the input buffer. Range: `0.0–1.0`. Safe default: `0.58`. Low values scan slowly, repeating similar source material; high values sweep rapidly through the buffer, introducing more temporal variety.
+</ParamField>
+
+<ParamField path="freeze_prob" type="float">
+  Probability that any given grain triggers a freeze — a sustained hold of that grain cloud. Range: `0.0–0.75`. Safe default: `0.08`. At `0.0` no freezes occur; at `0.75` freezes occur frequently, creating layered stasis over the moving granular stream.
+</ParamField>
+
+<ParamField path="freeze_len_s" type="float">
+  Duration of each freeze hold in seconds. Range: `0.2–6.0 s`. Safe default: `0.9 s`. Short freezes (`0.2–1.0 s`) create brief suspended moments; long freezes (`3.0–6.0 s`) produce extended drones layered over the ongoing granulation. The effective maximum is reduced by the active preset voicing.
+</ParamField>
+
+<ParamField path="pitch_spread_cents" type="float">
+  Pitch randomization applied per grain, in cents. Range: `0–35 cents`. Safe default: `24 cents`. At `0` all grains play at the original pitch; at `35 cents` pitch is spread across a roughly one-third semitone range per grain, creating a chorus-like shimmer. Also raises the scan jump probability floor (`scan_jump_prob ≥ pitch_spread_norm × 0.74`).
+</ParamField>
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `grain_size_ms` | `28 ms` |
+| `grain_density` | `0.62` |
+| `scan_rate` | `0.58` |
+| `freeze_prob` | `0.08` |
+| `freeze_len_s` | `0.9 s` |
+| `pitch_spread_cents` | `24 cents` |
+
+## Required Picks
+
+| Pick | Default |
+|------|---------|
+| `preset_id` | `fracture` |
+| `spatial_pattern_id` | `fragment_soft` |
+
+## Legacy Aliases
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `grain_size` | `grain_size_ms` | Linear transform: `[0,1] → [12, 120]` |
+| `scan_jump_prob` | `scan_rate` | Direct remap |
+| `spread` | `pitch_spread_cents` | Linear transform: `[0,1] → [0, 35]` |
+| `density` | `grain_density` | Direct remap |
+
+<Info>
+  If `freeze_len_s` is absent, the engine derives it from `freeze_prob`: `freeze_len_s = 0.2 + 5.8 × clamp01(freeze_prob)`. This ensures a reasonable freeze duration is always set even when only `freeze_prob` is sent.
+</Info>
+
+## What to Verify by Ear
+
+- At `grain_size_ms=28` (default), the texture should feel fine-grained and glassy — original speech or tonal material is recognizable but fragmented.
+- Increasing `grain_density` from `0.1` to `0.9` should audibly thicken the cloud quickly — this is designed to be the fastest-responding parameter.
+- `freeze_prob=0.08` (default) should produce occasional, brief frozen moments. Raising to `0.5–0.75` should create frequent, overlapping stasis layers.
+- `pitch_spread_cents=24` (default) should produce a subtle chorus shimmer on pitched material. At `0` the granulation should sound transparent in pitch.
+- `scan_rate` at low values should sound more repetitive (read head barely moves); at high values the texture should be more varied and unpredictable.
+- With `preset_id=fracture` (default voicing), wet and reverb scales are at unity — a neutral baseline. Switching to a `shimmer` preset should audibly increase the spaciousness and reverb tail.
+- The `fragment_soft` spatial pattern should produce fragmenting, diffuse spatial movement matching the granular character.

@@ -1,0 +1,115 @@
+---
+title: "Mode 6: Parallel Dry + Resonifier"
+description: "Live dry signal stays centered while a MIDI resonifier layer generates spatialized harmonic voices in parallel."
+---
+
+Mode 6 layers a continuous dry signal with a MIDI-driven resonifier. Unlike [Mode 5](/modes/mode-5-midi-resonification), the dry input is never silenced — it stays anchored at center while resonifier voices orbit around it. Voice generation is deliberately rate-limited and capped lower than Mode 5 to keep the dry image legible.
+
+## Required picks
+
+In addition to the universal `preset_id` and `spatial_pattern_id` picks, Mode 6 requires:
+
+| Pick | Description |
+|------|-------------|
+| `midi_inst_id` | Instrument manifest entry used by the resonifier sampler |
+| `chord_set_id` | Chord set that constrains resonifier note choices |
+
+Missing either pick triggers a hard contract violation and the engine falls back to safe defaults (`inst_A` / `cs_neutral`). See [reference/mode-contract](/reference/mode-contract) for pick validation rules.
+
+<Warning>
+**Hard voice cap: 3 voices, 6 notes/sec.** The engine enforces `voice_cap ∈ [1, 3]` and `note_rate_notes_per_s ∈ [0, 6]` regardless of what the model outputs. Values above these ceilings are clamped before any audio graph update. This is lower than Mode 5 by design — Mode 6 must leave headroom for the dry signal.
+</Warning>
+
+## Parameters
+
+<ParamField path="note_rate_notes_per_s" type="float">
+  Rate at which new resonifier notes are triggered. Range: 0–6 notes/sec. Safe default: `2.4`. Higher values create denser harmonic activity but compete more with the dry image. Internally normalized to `[0, 1]` against the `[0, 6]` bounds before reaching the audio graph.
+</ParamField>
+
+<ParamField path="voice_cap" type="float">
+  Maximum simultaneous resonifier voices. Range: 1–3. Safe default: `2.0`. The hard cap means a model output of `3.0` is the absolute ceiling — the engine will clamp anything above. At `1.0` the resonifier is essentially monophonic.
+</ParamField>
+
+<ParamField path="pitch_follow" type="float">
+  How closely resonifier pitches track the detected input pitch. Range: 0.65–1.0. Safe default: `0.80`. At `1.0` voices track the input tightly; at `0.65` the chord set dominates and tracking is loose. Values below `0.65` are rejected by bounds clamping.
+</ParamField>
+
+<ParamField path="velocity_bias" type="float">
+  Velocity shaping bias for triggered notes. Range: 0–1 (normalized). Safe default: `0.52`. Higher values push note velocity toward the upper end, making the resonifier layer more present in the mix.
+</ParamField>
+
+<ParamField path="level" type="float">
+  Overall output level of the resonifier layer. Range: 0–1 (normalized). Safe default: `0.58`. This scales the wet path; the dry path is controlled separately by `dry_level`.
+</ParamField>
+
+<ParamField path="stability" type="float">
+  Controls inharmonicity of the resonifier layer — higher stability means more locked, consonant voicing. Range: 0–1 (normalized). Safe default: `0.72`. Internally: `inharmonicity = 1.0 - stability`. Low stability values allow the resonifier to drift from strict chord tones.
+</ParamField>
+
+<ParamField path="dry_level" type="float">
+  Level of the dry input signal passed through to the output. Range: 0.35–0.95. Safe default: `0.68`. This range is intentionally bounded above `0` — Mode 6 always preserves the dry image. The floor of `0.35` ensures the dry signal remains audible even at the minimum.
+</ParamField>
+
+## Safe defaults
+
+```json
+{
+  "note_rate_notes_per_s": 2.4,
+  "voice_cap": 2.0,
+  "pitch_follow": 0.80,
+  "velocity_bias": 0.52,
+  "level": 0.58,
+  "stability": 0.72,
+  "dry_level": 0.68
+}
+```
+
+## Default picks
+
+```json
+{
+  "preset_id": "mididry_A",
+  "bank_id": "phrases_A",
+  "midi_inst_id": "inst_A",
+  "chord_set_id": "cs_neutral",
+  "articulation_id": "short",
+  "spatial_pattern_id": "orbit_mid"
+}
+```
+
+<Note>
+The default articulation is `short` (not `legato` as in Mode 5). Short articulation keeps resonifier notes punchy and distinct from the sustained dry signal, reducing muddiness in the combined image.
+</Note>
+
+## Legacy aliases
+
+The following legacy param names are accepted and transparently mapped to their canonical counterparts. Legacy transforms apply a linear rescale from the original value range to the canonical bounds.
+
+| Legacy name | Canonical name | Transform |
+|-------------|---------------|-----------|
+| `note_rate` | `note_rate_notes_per_s` | `linear(0, 6)` |
+
+All other params (`voice_cap`, `pitch_follow`, `velocity_bias`, `level`, `stability`, `dry_level`) have no legacy aliases in Mode 6 — send canonical names only.
+
+## CLEAR behavior
+
+Pressing **CLEAR** (or sending `flags.reset_voices = true`) calls `resetVoices = true` on the audio control, which releases all active resonifier voices cleanly. Unlike a hard mute, CLEAR lets currently-sounding notes complete their release envelope before the voice pool is reset. The dry signal is unaffected and continues uninterrupted during the CLEAR event.
+
+<Tip>
+CLEAR is the correct way to unstick held resonifier voices during a session. If voices appear stuck after a parameter jump, send a CLEAR rather than switching modes.
+</Tip>
+
+## What to verify by ear
+
+- The dry input should remain **centered** in the stereo/spatial image at all times. If the dry signal appears to move or be affected by spatial modulation, check `spatial_pattern_id` — the orbit pattern applies to resonifier voices only, not the dry path.
+- Resonifier voices should be **audibly spatialized** around the center dry image, not collapsed to center alongside it.
+- At `note_rate_notes_per_s = 2.4` and `voice_cap = 2.0` (safe defaults), the texture should be sparse and complementary, not dense or competing. If it sounds busy, reduce `note_rate_notes_per_s` first.
+- CLEAR should release resonifier voices cleanly with no abrupt clicks — a clean tail is expected.
+- The `dry_level` floor means even at the minimum setting (`0.35`) the dry signal should remain present. No setting should make Mode 6 sound like Mode 5 (dry-absent wet-only).
+
+## See also
+
+- [Mode 5: MIDI-Resonification (wet-only)](/modes/mode-5-midi-resonification) — same resonifier, no dry signal
+- [Mode 0: Clean](/modes/mode-0-clean) — dry-dominant baseline with no resonifier
+- [reference/mode-contract](/reference/mode-contract) — contract validation and bounds clamping rules
+- [reference/param-bounds](/reference/param-bounds) — full bounds table for all modes

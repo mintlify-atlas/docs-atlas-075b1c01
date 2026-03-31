@@ -1,0 +1,285 @@
+---
+title: 'Architecture'
+description: 'How The Tub Harness is structured: core loop, DSP engine, manifest routing, logging, visual stage, replay, and threading model.'
+keywords: ['architecture', 'core loop', 'dsp', 'audio engine', 'manifest', 'logging', 'replay', 'threading']
+---
+
+The Tub Harness is built around a tight 10 Hz run loop that connects live audio input to a remote ML model server and routes the model's decisions into a real-time DSP graph. This page describes every major subsystem and how they fit together.
+
+## Core loop — `TubMLClient`
+
+`TubMLClient` is the central coordinator. It is an `@ObservableObject` that owns:
+
+- The **10 Hz `DispatchSourceTimer`** on a `userInitiated` queue (`tub.ml.udp`)
+- The **`NWConnection` UDP socket** to the model server (`127.0.0.1:9910` by default)
+- The **session lifecycle** — session ID, bundle metadata, `JSONLLogger`
+- The **controls state** — mode (0–10), JOLT, CLEAR, human label
+
+Every tick follows the same sequence:
+
+```
+TubMLClient timer fires (every 100 ms)
+  │
+  ├─ 1. Lock controls state → read mode, buttons, jolt-held flag
+  ├─ 2. Call featuresProvider() → get FeaturePacketSnapshot from AudioEngineController
+  ├─ 3. Build ModelIn { protocol_version, ts_ms, session_id, frame_hz:10, mode, buttons, features, state }
+  ├─ 4. JSON-encode with convertToSnakeCase → send over UDP
+  ├─ 5. Arm 500 ms timeout work item
+  ├─ 6. Receive UDP reply → cancel timeout → JSON-decode with convertFromSnakeCase
+  ├─ 7. Publish ModelOut via @Published var lastOut
+  ├─ 8. Call onModelOut callback → AudioEngineController applies DSP
+  └─ 9. JSONLLogger.writeFrame(in:, out:, label:, interventions:)
+```
+
+<Note>
+  Strict decoding is enforced on every packet. Unknown keys in `ModelIn`, `ModelOut`, `Features`, `Picks`, `Flags`, or `VisualOut` cause a `DecodingError.dataCorrupted` and the frame is dropped. This is intentional — protocol drift between harness and model versions must be caught immediately, not silently ignored.
+</Note>
+
+### Packet types
+
+`ModelPackets.swift` defines the full wire format. All types are `Codable` and `Equatable`.
+
+**`ModelIn`** — sent harness → model server on every tick:
+
+```swift
+struct ModelIn: Codable, Equatable {
+    let protocolVersion: Int    // must equal ModeContract.supportedProtocolVersion
+    let tsMs: Int               // Unix timestamp in milliseconds
+    let sessionId: String
+    let frameHz: Int            // always 10
+    let mode: Int               // 0–10, UI-controlled
+    let buttons: Buttons        // { jolt: Bool, clear: Bool }
+    let features: Features      // live audio analysis snapshot
+    let state: HarnessState?    // { overload, cooldown, lastModeMs }
+}
+```
+
+**`ModelOut`** — received model server → harness on every tick:
+
+```swift
+struct ModelOut: Codable, Equatable {
+    let protocolVersion: Int
+    let tsMs: Int
+    let mode: Int               // echoed back; must be 0–10
+    let params: [String: Double] // DSP parameter overrides, resolved by ModeEngine
+    let picks: Picks            // symbolic IDs for manifest resolution
+    let flags: Flags            // { requestCooldown, preferStability, thinEvents, resetVoices }
+    let visual: VisualOut       // required in protocol v2
+}
+```
+
+**`Features`** — 11 live audio analysis fields extracted by `AudioEngineController`:
+
+| Field | Type | Description |
+|---|---|---|
+| `loudnessLufs` | `Double` | Integrated loudness in LUFS |
+| `onsetRateHz` | `Double` | Transient onset rate in Hz |
+| `specCentroidHz` | `Double` | Spectral centroid in Hz |
+| `bandLow` / `bandMid` / `bandHigh` | `Double` | Normalized 3-band energy |
+| `noisiness` | `Double` | 0–1 noise estimate |
+| `pitchHz` | `Double?` | Detected fundamental frequency (nil if none) |
+| `pitchConf` | `Double` | Pitch confidence 0–1 |
+| `keyEstimate` | `String?` | Musical key estimate (e.g. `"A"`, `"F#"`) |
+| `keyConf` | `Double` | Key confidence 0–1 |
+
+---
+
+## AudioEngineController
+
+`AudioEngineController` owns the `AVAudioEngine` graph and is responsible for all live DSP. It is an `@ObservableObject` on a `userInitiated` queue.
+
+Its two primary responsibilities are:
+
+1. **Feature extraction** — continuously analyzing the live input buffer and publishing a `FeaturePacketSnapshot` that `TubMLClient` reads on every tick.
+2. **DSP application** — translating each new `ModelOut` into concrete changes to the `AVAudioEngine` graph: reverb parameters, granulator settings, resonator tuning, spatial panning positions, voice scheduling, and more.
+
+DSP changes are applied via `ModeEngine.resolve(_:)`, which takes a `ModelOut` and produces an `AudioControl` struct. `AudioEngineController` diffs the new `AudioControl` against the previous one and applies only what changed.
+
+### Safety rails
+
+Audio safety rails are enforced unconditionally in `AudioEngineController` and cannot be overridden by model output:
+
+```swift
+// ReverbTarget.clampRails() — called on every ModelOut
+wet = min(max(wet, 0.0), 0.50)      // reverb wet hard cap at 0.50
+decay = min(max(decay, 0.0), 1.0)
+```
+
+- **Reverb wet ≤ 0.50** — `ReverbTarget.clampRails()` is called on every resolved `AudioControl`.
+- **Limiter ceiling at −1 dBFS** — a master limiter node at the output bus catches any peaks regardless of mode.
+- **Per-mode voice caps** — mode 5 hard-caps at 8 resonifier voices and 12 notes/sec; mode 6 hard-caps at 3 voices and 6 notes/sec.
+
+<Warning>
+  These rails are non-negotiable. Do not remove the clamp or the limiter node. No mode flip is ever used as a safety response — mode follows the UI switch exclusively.
+</Warning>
+
+---
+
+## ContentView — 4-panel control room
+
+`ContentView` is the single SwiftUI scene. It binds to both `TubMLClient` and `AudioEngineController` via `@ObservedObject` and lays out a 4-panel control room UI:
+
+- **Top-left panel** — Run profile selector, input device picker, Start/Stop button, model server status and start/stop controls.
+- **Top-right panel** — Mode selector (0–10), JOLT button (tap or hold), CLEAR button, harness run mode toggle (Training / Performance).
+- **Bottom-left panel** — Human label buttons (`Good`, `Too Much`, `Too Flat`, `Clear Label`), session log paths, frame counters (sent, received, timeouts), last latency.
+- **Bottom-right panel** — Visual stage (`VideoStageView`), replay controls (session ID entry, Start/Seek/Stop Replay), model monitor context.
+
+`ContentView` also hosts the `ModelServerProcess` helper, which can launch and terminate the `tub-ml serve` process directly from the app without leaving the UI.
+
+---
+
+## Protocol v2 contract — `ModeContract`
+
+`ModeContract.swift` defines the locked, versioned contract between the harness and the model server. It covers all 11 modes and specifies:
+
+- **Canonical parameter names** — the exact `String` keys expected in `ModelOut.params`.
+- **Value bounds** — min/max for every parameter per mode.
+- **Required picks** — which `Picks` fields must be non-nil for each mode.
+- **Legacy aliases** — old parameter names that `ModeEngine` maps to canonical names for backward compatibility.
+- **Visual-head schema** — expected fields in `VisualOut` and their valid ranges.
+- **Safe defaults** — values used by `ModeEngine` when a parameter is missing from `ModelOut.params`.
+
+The contract carries a **pinned fingerprint** in `ModeContract.lockedContractFingerprint`. At startup, the harness computes the fingerprint of the loaded contract tables and compares it to the pinned value. A mismatch is logged as `lock=mismatch` and treated as a release blocker.
+
+<Warning>
+  If you modify any contract table, visual schema, or alias mapping, you must bump `ModeContract.supportedProtocolVersion` **and** update `lockedContractFingerprint` in lockstep. Shipping a harness/model pair with a fingerprint mismatch corrupts the training substrate.
+</Warning>
+
+---
+
+## Manifest catalog — `ManifestCatalog`
+
+`ManifestCatalog` is a singleton (`ManifestCatalog.shared`) that loads all JSON manifests from the app bundle's `Manifests/` directory at startup. It is used by both `TubMLClient` (for pick validation) and `ModeEngine` (for pick resolution).
+
+Manifest files and their purposes:
+
+| File | Used for |
+|---|---|
+| `banks.json` | Resolves `picks.bankId` to a sample bank descriptor |
+| `instruments.json` | Resolves `picks.midiInstId` to a sampler instrument (type must be `sampler`) |
+| `chords.json` | Resolves `picks.chordSetId` to a chord voicing set |
+| `motifs.json` | Resolves `picks.motifId` to a melodic motif |
+| `spatial_patterns.json` | Resolves `picks.spatialPatternId` to a spatial panning pattern |
+
+Each instrument entry in `instruments.json` must have `type: "sampler"` and one of `sample_pack_path`, `soundfont_path`, or `sampler_preset_ref`. Optional shaping metadata (`gain_db`, `polyphony_hint`, `velocity_layers`, `round_robin_count`) is also supported.
+
+At startup, the catalog validates that all mode-default picks resolve. Missing IDs are logged and fall back to deterministic per-mode defaults. The fallback is always safe — it never produces silence or a crash.
+
+---
+
+## Logging subsystem — `JSONLLogger`
+
+`JSONLLogger` writes the training substrate to disk. It manages three file handles per session and flushes on every write:
+
+<CardGroup cols={3}>
+  <Card title="frames_*.jsonl" icon="table">
+    One JSON line per 10 Hz tick. Each line contains the full `ModelIn`, `ModelOut`, any active human label, interventions list, and frame index. This is the primary training data file.
+  </Card>
+  <Card title="events_*.jsonl" icon="bolt">
+    Discrete event log. One JSON line per event: mode changes, JOLT pulses, CLEAR pulses, label changes, pick fallbacks, fingerprint status, protocol errors.
+  </Card>
+  <Card title="session_meta_*.json" icon="info">
+    Single-line JSON written at session start. Contains session ID, start timestamp, bundle ID, policy name, contract fingerprint, run profile, and harness version.
+  </Card>
+</CardGroup>
+
+All three files live in `sessions/<session_id>/`. The session directory is created atomically at the start of each run. Files are kept open for the duration of the session and closed on `JSONLLogger.close()`, which is called from `TubMLClient.deinit` and from the Stop button handler.
+
+For the full schema of every log field, see the [log schema reference](/reference/log-schema).
+
+---
+
+## Visual stage — `VideoOutputController` + `VideoStageView`
+
+Every `ModelOut` includes a `VisualOut` payload that drives the visual stage independently of the audio DSP.
+
+**`VideoOutputController`** maps `VisualOut` fields to scene parameters — `sceneId`, `density`, `cohesion`, `disruption`, `tokenSalience`, `wordmarkIntegrity`, `decayMs`, `flashBias`, `anchorWeights`, and the `thought`/`thoughtLog` strings.
+
+**`VideoStageView`** renders the scene at 24 Hz using SwiftUI Canvas with a Metal shader. The scene interpolates smoothly between `VisualOut` snapshots using `decayMs` as the crossfade window.
+
+Default visual scenes per mode:
+
+| Mode | Default scene | Character |
+|---|---|---|
+| 0 | `quiet_watch` | Low density, high integrity, slow decay |
+| 1 | `relay_mesh` | Medium density, moderate disruption |
+| 2 | `memory_drift` | Higher density, lower cohesion |
+| 3 | `fault_lattice` | Moderate density, elevated disruption |
+| 4 | `fault_lattice` | High density, high disruption |
+| 5 | `relay_mesh` | Medium density, high cohesion |
+| 6 | `grid_lock` | Low density, very high cohesion |
+| 7 | `memory_drift` | Medium density, balanced parameters |
+| 8 | `quiet_watch` | Very low density, very high integrity |
+| 9 | `alarm_splay` | High density, high disruption |
+| 10 | `alarm_splay` | Maximum density, maximum disruption |
+
+---
+
+## Replay system — `ReplayCLI`
+
+The harness supports two replay modes:
+
+**Headless CLI replay** — pass arguments to the binary directly:
+
+```bash
+APP_BIN=$(find ~/Library/Developer/Xcode/DerivedData \
+  -path '*TheTubHarness.app/Contents/MacOS/TheTubHarness' | head -n 1)
+
+"$APP_BIN" \
+  --replay /Users/seb/the-tub-harness/fixtures/golden_trace.jsonl \
+  --speed 0 \
+  --out /tmp/the-tub-replay-out.jsonl
+```
+
+Replay flags:
+
+| Flag | Description |
+|---|---|
+| `--replay <trace.jsonl>` | Input trace to replay |
+| `--speed <float>` | `1.0` = recorded cadence, `>1.0` = accelerated, `0` = as fast as possible |
+| `--out <output.jsonl>` | Output path for replayed frames |
+| `--bundle-id <id>` | Override bundle ID in output lines |
+| `--host <ip>` | Model server host (default `127.0.0.1`) |
+| `--port <udp_port>` | Model server port (default `9910`) |
+
+**UI replay by session ID** — from the control room:
+
+1. Enter a session ID in the **Replay session_id** field.
+2. Click **Start Replay**.
+3. Optionally use **Seek Replay** (seconds) to jump to a position.
+4. Click **Stop Replay** to cancel.
+
+The replayer loads `session_meta_<session_id>.json` plus the frame and event logs. If `input_<session_id>.caf` (or `.wav`) exists in the session directory, replay injects that file into the same input bus path used by live mic/line input, pacing frame playback against replay-audio time using recorded frame timestamps. If input audio is missing, frame-stream replay still runs and logs `{"replay_audio_missing": true, ...}`.
+
+---
+
+## Threading model
+
+<Note>
+  Threading discipline is critical to correctness. Violating these boundaries — particularly writing UI state from a background queue — will cause undefined SwiftUI behavior. Always dispatch back to the main queue before updating any `@Published` property.
+</Note>
+
+| Thread / Queue | Responsibilities |
+|---|---|
+| **Main thread** | All SwiftUI state updates, `@Published` mutations, ContentView rendering |
+| `tub.ml.udp` (userInitiated) | 10 Hz timer, UDP send/receive, `ModelIn` construction, `ModelOut` decode |
+| `tub.audio.record.writer` (utility) | `AVAudioFile` writes for input recording (via `AudioRecorder`) |
+| AVAudioEngine render thread | Real-time audio DSP — no allocations, no locks in render callbacks |
+| Logging queue (utility) | `JSONLLogger` file I/O — all writes are async off the hot path |
+
+`TubMLClient` and `AudioEngineController` are `@ObservableObject` classes. Their `@Published` properties are always set on the main queue via `DispatchQueue.main.async { }` from background queues. The `controlsLock` (`NSLock`) in `TubMLClient` protects mode, buttons, and jolt state that are read from the UDP queue and written from the main thread.
+
+<CardGroup cols={2}>
+  <Card title="Mode contract" icon="file-contract" href="/reference/mode-contract">
+    Protocol v2 spec: canonical params, aliases, bounds, and fingerprint rules.
+  </Card>
+  <Card title="Log schema" icon="database" href="/reference/log-schema">
+    Full schema for frames, events, and session metadata JSONL files.
+  </Card>
+  <Card title="Modes overview" icon="sliders" href="/modes/overview">
+    Sonic character and parameter space for all 11 DSP modes.
+  </Card>
+  <Card title="Manifests overview" icon="book" href="/manifests/overview">
+    How manifest catalogs are structured and how pick resolution works.
+  </Card>
+</CardGroup>

@@ -1,0 +1,93 @@
+---
+title: "Mode 4: Clean + Samples + Resynthesis"
+description: "Clean bed always present; a sparse gesture layer adds sample and resynthesis responses with bounded concurrency."
+---
+
+## Overview
+
+Mode 4 runs two parallel layers: a clean dry bed that is always present, and a gesture layer that fires sample or resynthesis responses sparsely in reaction to the live input. The gesture layer responds to input events (onsets, energy changes) with a call-and-response character — it does not play continuously but fires at a controlled rate.
+
+`stability` is a key control: higher values increase memory weight (the engine prefers familiar gestures it has used before) and raise the similarity target for sample selection. Lower values allow more variety and unpredictability in gesture selection.
+
+**Default picks:** `preset_id=ultrachunk_A`, `bank_id=samples_A`, `sample_id=s000`, `spatial_pattern_id=cluster_rotate`
+
+<Note>
+  The clean dry bed (`dry_level`) is always audible in Mode 4. Even at `sample_mix=1.0`, the dry path is not silenced — this distinguishes Mode 4 from Mode 5, where `dry_level` is forced to `0.0`.
+</Note>
+
+## Parameters
+
+<ParamField path="density" type="float">
+  Interruptiveness of the gesture layer — how aggressively gestures interrupt or overlap the live signal. Range: `0.0–1.0`. Safe default: `0.38`. Low values keep gestures sparse and non-intrusive; high values allow more frequent and overlapping responses. Internally raises `call_response_bias` is inverted from this: `call_response_bias = 0.85 − (0.60 × density)`.
+</ParamField>
+
+<ParamField path="gesture_rate_hz" type="float">
+  Maximum rate at which new gesture events are triggered, in Hz. Range: `0.1–6.0 Hz`. Safe default: `1.2 Hz`. Low values (`0.1–0.5 Hz`) produce rare, deliberate responses; higher values (`3.0–6.0 Hz`) allow rapid-fire gestures that can create dense layering.
+</ParamField>
+
+<ParamField path="sample_mix" type="float">
+  Level of the gesture/sample layer in the mix. Range: `0.0–1.0`. Safe default: `0.30`. Low values keep gesture responses subtle under the dry bed; higher values bring the sample layer forward. The wet level is derived from this: `wet = clamp(0.08 + 0.34 × sample_mix, max=0.40)`.
+</ParamField>
+
+<ParamField path="dry_level" type="float">
+  Level of the clean dry signal (the always-present bed). Range: `0.0–1.0`. Safe default: `0.72`. This is the foundation of Mode 4's sound — it remains present regardless of gesture activity.
+</ParamField>
+
+<ParamField path="stability" type="float">
+  How much the engine favors familiar, previously-used gestures. Range: `0.0–1.0`. Safe default: `0.70`. Higher values increase `memory_weight` and raise `similarity_target` (`0.25 + 0.65 × stability`), producing more consistent and coherent gesture selection. Lower values allow greater variety and surprise.
+</ParamField>
+
+## Required Picks
+
+| Pick | Default | Notes |
+|------|---------|-------|
+| `preset_id` | `ultrachunk_A` | Reverb and routing preset |
+| `bank_id` | `samples_A` | Sample bank to draw gesture material from |
+| `sample_id` | `s000` | Starting sample ID within the bank |
+| `spatial_pattern_id` | `cluster_rotate` | Spatial motion pattern for the gesture layer |
+
+<Warning>
+  `bank_id` and `sample_id` are required picks. Missing either is a hard contract violation and will cause the harness to fall back to safe defaults for this mode. Picks must resolve against the `banks.json` manifest — missing IDs are logged and per-mode defaults are used.
+</Warning>
+
+## Optional Picks
+
+| Pick | Default | Notes |
+|------|---------|-------|
+| `category_id` | `general` | Filters samples within the bank by category |
+| `gesture_type_id` | `call_response` | Gesture type for the engine; default `call_response` |
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `density` | `0.38` |
+| `gesture_rate_hz` | `1.2 Hz` |
+| `sample_mix` | `0.30` |
+| `dry_level` | `0.72` |
+| `stability` | `0.70` |
+
+## Legacy Aliases
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `gesture_rate` | `gesture_rate_hz` | Linear transform: `[0,1] → [0.1, 6.0]` |
+| `gesture_level` | `sample_mix` | Direct remap |
+| `sample_level` | `sample_mix` | Direct remap |
+| `interruptiveness` | `density` | Direct remap |
+| `memory_weight` | `stability` | Direct remap |
+| `wet` | `sample_mix` | Direct remap |
+
+<Info>
+  If `sample_mix` is absent, the engine checks for `gesture_level` then `wet` as fallbacks before using the default. This is handled directly in the engine param resolution, not just via alias lookup.
+</Info>
+
+## What to Verify by Ear
+
+- The dry bed should always be clearly audible — clean, unprocessed, present throughout.
+- At `gesture_rate_hz=1.2` and `density=0.38` (defaults), gesture responses should feel sparse and call-and-response in character, not continuous.
+- Raising `density` toward `1.0` should make gestures more frequent and interruptive; lowering toward `0.0` should make them rare and deferential.
+- `stability=0.70` (default) should produce gestures that feel cohesive over time — similar material reappears. Lowering to `0.1` should introduce more variety.
+- `sample_mix=0.30` (default) should keep the gesture layer audible but under the dry bed. Raising to `0.8–1.0` should bring gestures forward without silencing the dry signal.
+- The `cluster_rotate` spatial pattern should produce a rotating cluster movement that makes gesture voices spatially distinct from the centered dry bed.
+- Bank and sample IDs must resolve against `banks.json`; if they don't, a warning is logged and per-mode defaults are substituted.

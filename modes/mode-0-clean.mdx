@@ -1,0 +1,83 @@
+---
+title: "Mode 0: Clean"
+description: "Mostly dry input with subtle room reverb and minimal motion. The lowest-intervention mode."
+---
+
+## Overview
+
+Mode 0 is the clean baseline mode. The dry signal dominates; reverb adds a small room sense rather than a dramatic effect. Motion is minimal by default. Use this mode to verify input signal integrity, as a performance safety net, or any time you want the source to be clearly intelligible with only gentle spatial treatment.
+
+**Default picks:** `preset_id=room_clean`, `spatial_pattern_id=drift_slow`
+
+<Note>
+  Reverb wet is globally capped at `≤ 0.50` in all modes. In Mode 0, the safe default `reverb_mix` is `0.12`, well within this ceiling. Even at maximum `reverb_mix=1.0` from the model, the rail prevents the reverb from overwhelming the dry signal.
+</Note>
+
+## Parameters
+
+<ParamField path="dry_level" type="float">
+  Level of the dry (unprocessed) input signal in the output mix. Range: `0.0–1.0`. Safe default: `0.92`. At the default value the source is clearly audible with only a light wet layer on top.
+</ParamField>
+
+<ParamField path="reverb_mix" type="float">
+  Wet/dry balance of the reverb send. Range: `0.0–1.0` (hardware-capped at `0.50`). Safe default: `0.12`. Low values keep the reverb subtle and room-like; higher values open up the space while remaining bounded.
+</ParamField>
+
+<ParamField path="reverb_decay_s" type="float">
+  Reverb tail length in seconds. Range: `0.2–2.8 s`. Safe default: `0.9 s`. Values below `1.0 s` give a tight room feel; values near `2.8 s` produce a larger, more diffuse space without the tail becoming unwieldy.
+</ParamField>
+
+<ParamField path="pre_delay_ms" type="float">
+  Reverb pre-delay in milliseconds — the gap between the dry transient and the reverb onset. Range: `0–60 ms`. Safe default: `12 ms`. Short values (`0–15 ms`) keep the reverb attached to the source; longer values (`30–60 ms`) separate the room from the dry signal and add depth.
+</ParamField>
+
+<ParamField path="tone_db" type="float">
+  Tonal tilt in decibels applied to the output level path. Range: `−6–+6 dB`. Safe default: `0.0 dB`. Positive values brighten the output; negative values reduce apparent brightness. Internally mapped to a level offset: `level = clamp(0.62 + tone_db / 24.0)`.
+</ParamField>
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `dry_level` | `0.92` |
+| `reverb_mix` | `0.12` |
+| `reverb_decay_s` | `0.9 s` |
+| `pre_delay_ms` | `12 ms` |
+| `tone_db` | `0.0 dB` |
+
+Safe defaults are applied automatically when a hard contract violation occurs (missing required pick, non-finite param, protocol version mismatch, or unknown param).
+
+## Required Picks
+
+All modes require `preset_id` and `spatial_pattern_id`. Mode 0 has no additional required picks.
+
+| Pick | Default |
+|------|---------|
+| `preset_id` | `room_clean` |
+| `spatial_pattern_id` | `drift_slow` |
+
+## Legacy Aliases
+
+These older parameter names are accepted and mapped to canonical names automatically. Transforms are applied where the legacy name had a different scale than the canonical param.
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `reverb_wet` | `reverb_mix` | Direct remap, no scale change |
+| `reverb_size` | `reverb_mix` | Direct remap, no scale change |
+| `wet` | `reverb_mix` | Direct remap, no scale change |
+| `reverb_decay` | `reverb_decay_s` | Linear transform: `[0,1] → [0.2, 2.8]` |
+| `pre_delay` | `pre_delay_ms` | Linear transform: `[0,1] → [0.0, 60.0]` |
+| `brightness` | `tone_db` | Linear transform: `[0,1] → [−6, 6]` |
+
+<Info>
+  If `tone_db` is absent but `brightness` (legacy) is present, a derived fallback is computed: `tone_db = −6.0 + 12.0 × clamp01(brightness)`. This ensures backward compatibility without requiring an alias lookup.
+</Info>
+
+## What to Verify by Ear
+
+- Dry signal should be clearly dominant — the source is identifiable without effort.
+- Reverb tail should feel like a room, not a hall or plate. At `reverb_decay_s=0.9` and `reverb_mix=0.12`, you should hear the space without hearing the reverb as a separate effect.
+- Increasing `reverb_mix` toward `0.4–0.5` should widen the sense of space; the tail should not ring uncontrollably.
+- `pre_delay_ms` above `30 ms` should audibly separate the room from the transient — the dry hit arrives first, then the reverb opens behind it.
+- `tone_db` at `+6` should raise apparent brightness; at `−6` it should darken without distortion.
+- Motion should be minimal — the `drift_slow` spatial pattern means slow, barely-perceptible image movement.

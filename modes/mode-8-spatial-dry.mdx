@@ -1,0 +1,110 @@
+---
+title: "Mode 8: Spatial Dry + Diffuse Verb"
+description: "The dry signal moves as a single point source in space while a diffuse reverb tail stays spatially spread and independent."
+---
+
+Mode 8 separates the dry image from the reverb tail and treats them as distinct spatial entities. The dry signal is rendered as a single moving point source whose position changes according to `motion_speed` and `spread`. The reverb is diffuse — it does not track the dry source position but instead fills the spatial field with a spread, ambient tail.
+
+The result is a spatial bed where you can hear the dry input "move" through the field while the reverb remains a consistent, non-directional wash behind it.
+
+## Reverb decay architecture
+
+Mode 8 uses a two-parameter reverb decay model instead of a single decay value:
+
+- **`reverb_decay_base_s`** — the center decay time, in seconds
+- **`reverb_decay_range_s`** — the randomization range added on top of the base
+
+The effective decay time is computed as:
+
+```
+decay_s = clamp(base + range × twitchiness × 0.5, 0.2, 3.5)
+```
+
+`twitchiness` modulates how much of the range is actually applied. At `twitchiness = 0.0` the decay equals `reverb_decay_base_s` exactly. At `twitchiness = 1.0` the full `reverb_decay_range_s × 0.5` is added on top. This means the effective maximum decay at default settings (`base=1.0`, `range=0.6`, `twitchiness=0.32`) is approximately `1.096 s`.
+
+<Note>
+`reverb_decay_range_s` is a *range*, not an absolute decay time. A value of `0.6` does not mean the reverb decays in `0.6` seconds — it means the decay can vary by up to `0.3` seconds above `reverb_decay_base_s` depending on `twitchiness`. If you want a predictable, stable decay, set `reverb_decay_range_s = 0.0` and use `reverb_decay_base_s` alone.
+</Note>
+
+## Parameters
+
+<ParamField path="reverb_rand_amt" type="float">
+  Reverb wet level / randomization amount. Range: 0–1 (normalized). Safe default: `0.28`. This controls how much reverb is in the output and also feeds the derived `reverb_decay_range_s` computation in legacy contexts (when `reverb_decay_range_s` is absent). In the audio graph, `dry_level = max(0.45, 1.0 - reverb_rand_amt)`, so increasing reverb automatically reduces the dry level but never below `0.45`.
+</ParamField>
+
+<ParamField path="reverb_decay_base_s" type="float">
+  Base reverb decay time, in seconds. Range: 0.2–3.5 s. Safe default: `1.0`. This is the floor of the effective decay — the actual decay will be equal to or greater than this value depending on `reverb_decay_range_s` and `twitchiness`.
+</ParamField>
+
+<ParamField path="reverb_decay_range_s" type="float">
+  Randomization range added to the base decay. Range: 0–2 s. Safe default: `0.6`. The effective contribution to the decay is `range × twitchiness × 0.5`. Set to `0.0` for a fixed, deterministic decay equal to `reverb_decay_base_s`.
+</ParamField>
+
+<ParamField path="reverb_color" type="float">
+  Reverb damping / spectral color. Range: 0–1 (normalized). Safe default: `0.42`. Higher values damp high-frequency content in the reverb tail, producing a darker, warmer wash. Lower values retain more high-frequency energy for a brighter, airier tail.
+</ParamField>
+
+<ParamField path="twitchiness" type="float">
+  Controls how much spatial motion and decay randomization are applied. Range: 0–1 (normalized). Safe default: `0.32`. Affects both how far the dry point source moves per cycle and how much of `reverb_decay_range_s` is applied. Higher values produce more restless, variable motion; lower values stabilize the image.
+</ParamField>
+
+<ParamField path="motion_speed" type="float">
+  Speed of the dry point source movement through space. Range: 0–1 (normalized). Safe default: `0.38`. Independently controls the velocity of the dry source's orbit/drift without affecting the reverb parameters. The motion radius is derived as `max(0.20, spread)`.
+</ParamField>
+
+<ParamField path="spread" type="float">
+  Spatial spread of the dry point source's orbit radius. Range: 0–1 (normalized). Safe default: `0.58`. Also sets the floor for `motion_radius` — higher spread means the point source moves across a wider arc.
+</ParamField>
+
+## Safe defaults
+
+```json
+{
+  "reverb_rand_amt": 0.28,
+  "reverb_decay_base_s": 1.0,
+  "reverb_decay_range_s": 0.6,
+  "reverb_color": 0.42,
+  "twitchiness": 0.32,
+  "motion_speed": 0.38,
+  "spread": 0.58
+}
+```
+
+## Default picks
+
+```json
+{
+  "preset_id": "space",
+  "spatial_pattern_id": "orbit_slow"
+}
+```
+
+## Legacy aliases
+
+The following legacy param names are accepted and rescaled to their canonical counterparts:
+
+| Legacy name | Canonical name | Transform |
+|-------------|---------------|-----------|
+| `reverb_wet` | `reverb_rand_amt` | identity (0–1) |
+| `wet` | `reverb_rand_amt` | identity (0–1) |
+| `reverb_decay` | `reverb_decay_base_s` | `linear(0.2, 3.5)` |
+| `damping` | `reverb_color` | identity (0–1) |
+
+<Note>
+If `reverb_decay_range_s` is absent from the model output, the engine derives it as `2.0 × clamp01(reverb_rand_amt)`. This is a compatibility fallback only — send `reverb_decay_range_s` explicitly for predictable behavior.
+</Note>
+
+## What to verify by ear
+
+- The dry signal should be heard as a **single moving point** — localized, directional, and in motion. It should not sound diffuse or spread.
+- The reverb tail should be **diffuse** — spatially spread, non-directional, and not tracking the dry source position. If the reverb appears to follow the dry point, the spatial routing has an issue.
+- At `motion_speed = 0.38` and `spread = 0.58` (safe defaults), the dry source should orbit slowly with a moderate radius. The movement should be clearly perceptible but not disorienting.
+- At `reverb_decay_base_s = 1.0` with `reverb_decay_range_s = 0.6` and `twitchiness = 0.32`, effective decay is approximately `1.1 s`. The reverb tail should fade naturally in just over a second.
+- Increasing `twitchiness` should simultaneously make the dry point move faster and the reverb decay slightly longer/more variable. If only one of these changes, the `twitchiness` routing is suspect.
+
+## See also
+
+- [Mode 0: Clean](/modes/mode-0-clean) — simpler dry + reverb with no spatial motion
+- [Mode 9: 3-Band Spatial Split](/modes/mode-9-3band-spatial) — per-band spatial control
+- [reference/mode-contract](/reference/mode-contract)
+- [reference/param-bounds](/reference/param-bounds)

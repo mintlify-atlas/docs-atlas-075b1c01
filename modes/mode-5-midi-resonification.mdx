@@ -1,0 +1,124 @@
+---
+title: "Mode 5: MIDI Resonification (Wet Only)"
+description: "Only the resonifier/sampler layer is audible. CLEAR releases voices; JOLT pushes harmony and energy. Hard cap: 8 voices, 12 notes/sec."
+---
+
+## Overview
+
+Mode 5 is a wet-only mode: the dry input is silenced (`dry_level=0.0`) and only the MIDI resonifier/sampler layer is audible. The engine listens to the live input for pitch and energy cues, then drives a MIDI-based resonifier that voices chords and melodic material drawn from the selected instrument and chord set.
+
+CLEAR and JOLT are both active and meaningful in this mode:
+
+- **CLEAR** triggers `resetVoices=true`, which immediately releases all active resonifier voices. Use this to silence the layer or flush a dense chord cluster.
+- **JOLT** raises `note_rate` and `voice_cap` (in addition to the global level/wet/reverb boost), creating an audible push in harmonic density and energy.
+
+<Warning>
+  Mode 5 is hard-capped at **8 resonifier voices** and **12 notes/sec**. These caps are enforced in the contract bounds (`voice_cap` max: `8`, `note_rate_notes_per_s` max: `12`) and cannot be exceeded regardless of model output. Sending values above the cap will clamp, not error.
+</Warning>
+
+**Default picks:** `preset_id=midiwet_A`, `bank_id=phrases_A`, `midi_inst_id=inst_A`, `chord_set_id=cs_neutral`, `articulation_id=legato`, `spatial_pattern_id=orbit_mid`
+
+## Parameters
+
+<ParamField path="note_rate_notes_per_s" type="float">
+  Maximum rate at which new notes are voiced by the resonifier, in notes per second. Range: `0.0–12.0 notes/sec`. Safe default: `4.0`. At `0.0` no new notes are triggered; at `12.0` the resonifier fires at the maximum allowed rate. Hard-capped at `12` by the contract.
+</ParamField>
+
+<ParamField path="voice_cap" type="float">
+  Maximum number of simultaneously active resonifier voices. Range: `2–8`. Safe default: `4`. Controls polyphony — lower values produce sparser, more open voicings; higher values allow dense chord clusters. Hard-capped at `8` by the contract.
+</ParamField>
+
+<ParamField path="pitch_follow" type="float">
+  How closely the resonifier tracks the input pitch when choosing note targets. Range: `0.65–1.0`. Safe default: `0.82`. At `0.65` (minimum), pitch selection is looser and more harmonically free; at `1.0`, the resonifier closely follows detected input pitch. The minimum of `0.65` ensures the resonifier always maintains some tonal relationship to the input.
+</ParamField>
+
+<ParamField path="velocity_bias" type="float">
+  Bias applied to MIDI velocity values sent to the instrument. Range: `0.0–1.0`. Safe default: `0.55`. Low values favor softer, quieter note events; high values bias toward louder, more assertive articulation.
+</ParamField>
+
+<ParamField path="level" type="float">
+  Overall output level of the resonifier/sampler layer. Range: `0.0–1.0`. Safe default: `0.62`. Drives the wet level: `wet = clamp(0.28 + 0.30 × level, max=0.60)`. Also controls the reverb tail via `inharmonicity`.
+</ParamField>
+
+<ParamField path="stability" type="float">
+  Stability of the resonifier voicing — how much harmonic inharmonicity is introduced. Range: `0.0–1.0`. Safe default: `0.72`. Higher values reduce inharmonicity (`inharmonicity = 1.0 − stability`), producing cleaner, more stable chord voicings. Lower values allow more detuning and harmonic spread.
+</ParamField>
+
+## Required Picks
+
+| Pick | Default | Notes |
+|------|---------|-------|
+| `preset_id` | `midiwet_A` | Reverb preset for this mode |
+| `bank_id` | `phrases_A` | Phrase/motif bank |
+| `midi_inst_id` | `inst_A` | Instrument from `instruments.json`; must be type `sampler` |
+| `chord_set_id` | `cs_neutral` | Chord set from `chords.json`; governs harmony choices |
+| `spatial_pattern_id` | `orbit_mid` | Spatial motion for resonifier voices |
+
+<Warning>
+  `midi_inst_id` and `chord_set_id` are required picks. Missing either is a hard contract violation. Both must resolve against their respective manifests (`instruments.json`, `chords.json`). Missing IDs are logged and per-mode defaults are substituted.
+</Warning>
+
+## Optional Picks
+
+| Pick | Default | Notes |
+|------|---------|-------|
+| `articulation_id` | `legato` | Articulation applied to voiced notes |
+| `motif_id` | `nil` | Optional motif from `motifs.json` |
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `note_rate_notes_per_s` | `4.0 notes/sec` |
+| `voice_cap` | `4` |
+| `pitch_follow` | `0.82` |
+| `velocity_bias` | `0.55` |
+| `level` | `0.62` |
+| `stability` | `0.72` |
+
+## Hard Caps
+
+| Constraint | Value |
+|------------|-------|
+| Maximum voices | **8** |
+| Maximum note rate | **12 notes/sec** |
+| Minimum `pitch_follow` | `0.65` |
+| Minimum `voice_cap` | `2` |
+| Dry level | **Always `0.0`** (wet only) |
+
+## Legacy Aliases
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `note_rate` | `note_rate_notes_per_s` | Linear transform: `[0,1] → [0.0, 12.0]` |
+
+<Info>
+  Mode 5 has only one legacy alias. All other parameters use their canonical names directly. The `note_rate` alias maps a normalized `[0,1]` value to the `[0, 12]` notes/sec range.
+</Info>
+
+## CLEAR and JOLT Behavior
+
+### CLEAR
+Pressing CLEAR (or sending `flags.reset_voices=true`) sets `resetVoices=true` in `AudioControl`. This immediately releases all active resonifier voices. Use CLEAR to:
+- Flush a dense or dissonant chord cluster.
+- Create a rhythmic silence or breath between harmonic phrases.
+- Reset the resonifier to a clean state before a new section.
+
+### JOLT
+Pressing JOLT applies the global JOLT boost (level, wet, reverb) plus resonifier-specific increases:
+- `noteRate += 0.20` (clamped at `1.0`)
+- `voiceCap += 0.15` (clamped at `1.0`, which maps toward the `8`-voice cap)
+
+JOLT should be audible as a surge in harmonic density and energy — more voices firing faster with increased spatial activity.
+
+## What to Verify by Ear
+
+- No dry signal should be audible in Mode 5 — only the resonifier/sampler layer.
+- At `note_rate_notes_per_s=4.0` and `voice_cap=4` (defaults), the resonifier should produce a moderately paced, 4-voice harmonic layer.
+- Raising `note_rate_notes_per_s` to `12` should produce rapid, dense note events — approaching the hard cap. Confirm the output does not exceed `12 notes/sec` instrumentally.
+- `voice_cap=8` should allow dense chord clusters; `voice_cap=2` should produce only sparse 2-voice intervals.
+- `pitch_follow=0.82` should produce voicings that track the input pitch recognizably but with harmonic freedom. At `0.65` (minimum), the relationship to input pitch should be looser.
+- CLEAR should immediately silence all voices with no fade artifact — an abrupt but clean cutoff.
+- JOLT should cause an audible energy surge: more notes, louder, more spatially active.
+- `stability=0.72` (default) should produce clean voicings. Lowering to `0.1` should introduce audible detuning and harmonic spread.
+- The `orbit_mid` spatial pattern should produce steady orbital movement of the resonifier voices.

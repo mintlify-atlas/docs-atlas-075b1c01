@@ -1,0 +1,166 @@
+---
+title: "Testing"
+description: "How to run the test suite, what each test covers, and the contract fingerprint invariant that is a release blocker."
+---
+
+The test suite is in `TheTubHarness/TheTubHarnessTests/TheTubHarnessTests.swift`. It covers protocol decoding, the mode contract, the feature extractor, the mode engine, manifest resolution, the training log schema, and end-to-end golden trace replay.
+
+<Note>
+  Tests use **Swift Testing** (`import Testing`, `@Test` macro, `#expect`), not XCTest. The test binary is still invoked via `xcodebuild -only-testing:TheTubHarnessTests`. Do not add XCTest imports or `XCTAssert*` calls — they are incompatible with the Swift Testing runner.
+</Note>
+
+---
+
+## Running the tests
+
+### Unit tests
+
+Runs the full suite except the golden trace integration test (which requires a running model server).
+
+```bash
+xcodebuild \
+  -scheme TheTubHarness \
+  -project TheTubHarness/TheTubHarness.xcodeproj \
+  -destination 'platform=macOS' \
+  -only-testing:TheTubHarnessTests \
+  test
+```
+
+All tests should pass with no model server present. Any test that requires external infrastructure gates itself behind an environment variable check and returns early if the variable is not set.
+
+### Golden trace integration test
+
+Replays `fixtures/golden_trace.jsonl` against a live model server and verifies round-trip latency, response completeness, and that all responses satisfy the mode contract.
+
+```bash
+RUN_GOLDEN_TRACE=1 MODEL_HOST=127.0.0.1 MODEL_PORT=9910 \
+  xcodebuild \
+    -scheme TheTubHarness \
+    -project TheTubHarness/TheTubHarness.xcodeproj \
+    -destination 'platform=macOS' \
+    -only-testing:TheTubHarnessTests \
+    test
+```
+
+#### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUN_GOLDEN_TRACE` | *(not set)* | Set to `1` to enable the golden trace test. Without this, the test returns immediately. |
+| `MODEL_HOST` | `127.0.0.1` | Hostname or IP of the model server. |
+| `MODEL_PORT` | `9910` | UDP port of the model server. |
+| `GOLDEN_MAX_LATENCY_MS` | `100` | Maximum acceptable round-trip latency (ms) for any single frame. |
+| `GOLDEN_MEDIAN_LATENCY_MS` | `50` | Maximum acceptable median round-trip latency (ms) across all frames. |
+
+Start the model server before running:
+
+```bash
+cd /path/to/the-tub-ml
+source .venv/bin/activate
+tub-ml serve --config configs/stub_policy_v1.yaml
+```
+
+---
+
+## What the golden trace test does
+
+1. Loads `fixtures/golden_trace.jsonl` using `TraceRecorder.loadReplayFrames`.
+2. Sends each frame's `ModelIn` to the model server over UDP at full speed (`speed: 0.0`), with a 1-second per-frame timeout.
+3. Collects all `ModelOut` responses and checks:
+   - Every frame received a response (no timeouts or missing `model_out`).
+   - Max round-trip latency ≤ `GOLDEN_MAX_LATENCY_MS`.
+   - Median round-trip latency ≤ `GOLDEN_MEDIAN_LATENCY_MS`.
+   - Every response's `mode` matches the sent `mode`.
+   - Every response's params pass `ModeContract.clamp` with no violations.
+   - Every response's picks pass `ModeContract.validate` with no violations.
+
+A failure in any of these checks means the model server is either unreachable, too slow, or producing output that violates the mode contract.
+
+---
+
+## Contract fingerprint test
+
+<Warning>
+  A `ModeContract` fingerprint mismatch is a **release blocker**. Do not ship a harness build if `computed != lockedContractFingerprint`. Update the fingerprint and bump the protocol/contract version in lockstep with the model.
+</Warning>
+
+The test `modeContractFingerprintLocked` verifies that `ModeContract.contractFingerprint()` — computed at runtime from the contract tables — matches the pinned value `ModeContract.lockedContractFingerprint`.
+
+```swift
+@Test("ModeContract fingerprint is locked")
+func modeContractFingerprintLocked() {
+    let computed = ModeContract.contractFingerprint()
+    if computed != ModeContract.lockedContractFingerprint {
+        Issue.record("ModeContract fingerprint mismatch. locked=\(ModeContract.lockedContractFingerprint) computed=\(computed)")
+    }
+    #expect(computed == ModeContract.lockedContractFingerprint)
+    let status = ModeContract.contractLockStatus()
+    #expect(status.matched)
+}
+```
+
+The pinned fingerprint is:
+
+```swift
+static let lockedContractFingerprint =
+    "3394bcdfa3c207eb33da3679ee7d15d9f017bba1ab2da6567a930947f9fb586f"
+```
+
+The fingerprint covers: `modeSpecificParams`, `legacyParamAliases`, `requiredPicksByMode`, `modeBounds`, `safeModeParams`, `visualSceneIds`, `visualBounds`, and `visualThoughtVocab`. Any change to these tables produces a different fingerprint.
+
+**When you change the contract:**
+1. Update the contract tables in `ModeContract.swift`.
+2. Bump `contractVersion` (e.g. `"control_surface_v3"`).
+3. Run the unit tests — `modeContractFingerprintLocked` will fail and print the new computed fingerprint.
+4. Update `lockedContractFingerprint` with the new value.
+5. Coordinate the same update with the model repository.
+
+The run bundle written at session start includes `contract_fingerprint`, so every session log is permanently associated with the exact contract version that was active. The startup banner also prints `lock=ok` or `lock=mismatch` so contract state is visible in logs without running the test suite.
+
+---
+
+## Unit test coverage summary
+
+| Test | What it covers |
+|------|---------------|
+| `modelOutDecodeHappyPath` | `ModelOut` decodes valid snake_case JSON with all fields |
+| `modelOutDecodeIsStrict` | Unknown fields and invalid `mode` (99) are rejected |
+| `modelOutDecodeRejectsLegacyProtocol` | Protocol v1 and missing visual head are rejected |
+| `featureExtractorSine` | Feature extractor produces finite, bounded values for a 1 kHz sine |
+| `traceRoundTrip` | `TraceRecord` encodes/decodes and replay frame loading works |
+| `modeContractClampAndValidate` | Params are clamped, unknown params are stripped, pick violations are reported |
+| `modeContractFingerprintLocked` | Contract fingerprint matches the pinned value |
+| `modeContractLegacyAliases` | Legacy param aliases resolve correctly for modes 0, 1, 3, 4, 7, 8, 9 |
+| `mlMonitorCurrentModeParamsOnly` | ML monitor renders only canonical params for the selected mode |
+| `mlMonitorDiffsAliasAndDefaults` | Alias-resolved and defaulted params are marked as harness-adjusted |
+| `mlMonitorPickDiffs` | Pick diffs show manifest-substituted values |
+| `mlMonitorWaitingOnModeSwitch` | Monitor shows waiting state when packet mode ≠ selected mode |
+| `heldJoltPersistsAcrossSnapshots` | Jolt state persists across control snapshots until released |
+| `videoStageSnapshotMapsCurrentMode` | Video stage snapshot maps mode 5 picks and params correctly |
+| `videoStageSnapshotTracksRecentChanges` | Video stage snapshot records param and pick changes |
+| `manifestDefaultsResolveMode4AndMode9` | Default picks for modes 4 and 9 resolve with no manifest notes |
+| `manifestResolutionCaseInsensitiveMode4AndMode9` | Manifest resolution is case-insensitive |
+| `manifestResolutionMode9SilentlyDefaultsOptionalPicks` | Mode 9 silently defaults unknown bank and instrument picks |
+| `controlSurfaceSweep` | Full param boundary sweep across all 11 modes produces finite, valid `AudioControl` |
+| `controlSurfaceClampInterventions` | Out-of-range params produce correct clamped values and intervention hints |
+| `mode3MappingBitFirstPosture` | Mode 3 wet level is higher under crush-heavy params than drive-heavy params |
+| `manifestCatalogResolution` | Manifest catalog falls back to deterministic defaults for unknown picks |
+| `modeEngineTargetModesStable` | All modes 0–10 produce finite controls; mode-specific invariants hold |
+| `mode56ClearSetsResetVoices` | Clear button and `reset_voices` flag produce voice reset in modes 5/6 |
+| `mode1SceneMacroMappingAndSceneOverride` | Mode 1 scene ID override is honored; macro params are bounded |
+| `mode1LegacyParamsMapToSceneMacros` | Mode 1 legacy params deterministically map to scene macros |
+| `pannerNormalization` | Grid spatializer gains sum to 1.0 |
+| `reverbCrossfadeRamp` | Crossfade ramp is monotonic and energy-preserving |
+| `cpuGuardBehavior` | CPU guard activates under high load and recovers when load drops |
+| `goldenTraceIntegrationReplay` | End-to-end model replay with latency and contract validation (requires `RUN_GOLDEN_TRACE=1`) |
+| `trainingFrameLogSchemaKeys` | Frame log JSON contains all required top-level and feature keys |
+| `bundleJsonContainsRequiredFields` | Bundle JSON includes all version and fingerprint fields; startup banner shows `lock=ok` |
+| `labelEventAndFrameLabel` | Label change events are written; frame log embeds the sticky label |
+
+---
+
+## Related pages
+
+- [Mode Contract](/reference/mode-contract) — contract tables, fingerprint, and protocol version
+- [Safety Rails](/reference/safety-rails) — what the contract enforcer caps and how violations are logged
+- [Log Schema](/reference/log-schema) — frame log schema tested by `trainingFrameLogSchemaKeys`

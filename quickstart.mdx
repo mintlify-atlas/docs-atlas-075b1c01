@@ -1,80 +1,194 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart'
+description: 'Build The Tub Harness, start the model server, and run your first live session.'
+keywords: ['quickstart', 'build', 'xcode', 'model server', 'audio', 'live run']
 ---
 
-## Get started in three steps
+This guide walks you from a fresh checkout to a running live session. The full path takes about 10 minutes if Xcode and the companion ML repo are already installed.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
 
-### Step 1: Set up your local environment
+  <Step title="Prerequisites">
+    Before you start, confirm you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    - **Xcode 15 or later** with the macOS SDK — the project targets macOS only.
+    - **macOS 14 (Sonoma) or later** — AVAudioEngine features and SwiftUI APIs used by the harness require a recent OS.
+    - **The companion ML repo** cloned at `/Users/seb/the-tub-ml` (or the path expected by `ContentView`). The model server runs from there.
+    - **Python 3.11+** with `tub-ml` installed in a virtualenv at `the-tub-ml/.venv`.
 
-### Step 2: Deploy your changes
+    <Info>
+      The harness hard-codes the ML repo path in `ModelServerProcess` inside `ContentView.swift`. If your checkout is in a different location, update `tubMlRoot` before building, or launch the server manually from your actual path.
+    </Info>
+  </Step>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Step title="Build the app">
+    Run the following command from the repository root to build a release-equivalent binary into Xcode's DerivedData:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    xcodebuild -scheme TheTubHarness \
+      -project TheTubHarness/TheTubHarness.xcodeproj \
+      -destination 'platform=macOS' build
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    A successful build prints `** BUILD SUCCEEDED **`. The `.app` bundle lands in `~/Library/Developer/Xcode/DerivedData/TheTubHarness-*/Build/Products/Debug/TheTubHarness.app`.
 
-### Step 3: Go live
+    To run unit tests (no model server required):
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    xcodebuild -scheme TheTubHarness \
+      -project TheTubHarness/TheTubHarness.xcodeproj \
+      -destination 'platform=macOS' \
+      -only-testing:TheTubHarnessTests test
+    ```
 
-## Next steps
+    <Note>
+      Tests use Swift Testing (`import Testing`, `@Test`, `#expect`) — not XCTest. Do not add XCTest imports to test files.
+    </Note>
+  </Step>
 
-Now that you have your docs running, explore these key features:
+  <Step title="Start the model server">
+    The harness expects a UDP server listening on `127.0.0.1:9910`. Start it before launching the app, or use the in-app **Start Server** button which runs the same commands:
+
+    ```bash
+    cd /Users/seb/the-tub-ml
+    source .venv/bin/activate
+    tub-ml serve --config configs/stub_policy_v1.yaml
+    ```
+
+    When the server is ready, it prints its protocol version and the UDP port it is listening on. Confirm the port is `9910` before proceeding.
+
+    <Warning>
+      The harness requires **protocol v2** from the model server. If the server responds with a packet missing the `visual` key, or if the `protocol_version` field does not match, the harness logs a protocol error and stops processing responses. Run a server version that supports protocol v2.
+    </Warning>
+  </Step>
+
+  <Step title="Open the project in Xcode">
+    Open the project file directly:
+
+    ```bash
+    open /Users/seb/the-tub-harness/TheTubHarness/TheTubHarness.xcodeproj
+    ```
+
+    Xcode resolves package dependencies on first open. Wait for the dependency fetch to complete before attempting to run.
+  </Step>
+
+  <Step title="Select the run profile">
+    In the app UI, the **Run Profile** picker shows the available profiles. Select **Audio + Real Features** (the default and only available profile). This profile routes live mic or line input through the full feature extraction pipeline and sends real audio features to the model server.
+
+    The output path is entirely input-driven — there is no synthetic test tone. If no input is present, the harness sends silence features (`loudness_lufs: -80`, all band levels at `0.0`).
+  </Step>
+
+  <Step title="Select mic or line input and press Start">
+    The **Input** picker in the top row of the control room lists all available CoreAudio input devices. Select your microphone or line input interface.
+
+    Press **Start** to begin the run loop. The harness creates a new session, opens the log files, connects to the model server, and starts the 10 Hz timer. You should see the sent and received frame counters incrementing in the UI within one second.
+
+    <Tip>
+      If the `Recv` counter stays at zero while `Sent` increments, the model server is not responding. Check that it started cleanly, that the port is `9910`, and that no firewall rule is blocking loopback UDP.
+    </Tip>
+
+    When the session starts, the harness logs a startup summary:
+
+    ```
+    running bundle <bundle_id> (policy=stub_policy_v1, banks=v3, contract=v2) fp=a3f9b2 lock=ok
+    ```
+
+    The `lock=ok` field confirms the contract fingerprint matches between harness and model server. `lock=mismatch` is a release blocker — stop the session and align versions before continuing.
+  </Step>
+
+  <Step title="Pick a mode (0–10) and start making sound">
+    Use the **Mode** picker to select one of the 11 DSP modes:
+
+    | Mode | Character |
+    |---|---|
+    | 0 | Clean — dry input, subtle room reverb, minimal motion |
+    | 1 | Beat Repeat — onset-gated stutters, quantized to `1/8` or `1/16` grid |
+    | 2 | Granulator — discontinuous "shattered time" texture from your input |
+    | 3 | Roar / Resonator — resonant wet layer over punchy dry; bounded distortion |
+    | 4 | Clean + Samples + Resynthesis — clean bed with sparse gesture responses |
+    | 5 | MIDI-resonification wet-only — resonifier/sampler layer only |
+    | 6 | Parallel dry + resonifier — dry input centered, voices spatialized |
+    | 7 | Swap Buckets — stepped spectral redistribution with crossfaded handoffs |
+    | 8 | Spatial dry + diffuse verb — dry image moves as a point source |
+    | 9 | 3-band spatial split — low/mid/high parts spread differently in space |
+    | 10 | Maximum disruption |
+
+    The mode follows the **UI switch only**. The ML model controls parameters within the current mode but cannot change the mode itself.
+  </Step>
+
+  <Step title="Use JOLT and CLEAR">
+    Two special buttons send control signals to the model server on the next tick:
+
+    **JOLT** sends `buttons.jolt: true` and can be used in two ways:
+    - **Pulse** (tap): consumed on the next single 100 ms tick, then resets to false.
+    - **Hold**: sends `jolt: true` on every tick while the button is held down. The UI reflects the held state via `TubMLClient.isJoltHeld`.
+
+    JOLT pushes the model toward higher energy, stronger harmony, or more disruptive parameter choices depending on the current mode. In modes 5 and 6 it audibly triggers voice generation.
+
+    **CLEAR** sends `buttons.clear: true` as a momentary pulse on the next tick. CLEAR releases held voices in modes 5 and 6, resets the beat-repeat buffer in mode 1, and clears running state accumulated since the last CLEAR.
+
+    <Note>
+      CLEAR and JOLT are momentary — they are consumed on the next 100 ms tick. Hold JOLT explicitly using the hold gesture if you want continuous pressure across multiple ticks.
+    </Note>
+  </Step>
+
+  <Step title="Set human labels">
+    The harness collects sticky human labels that are written into the training substrate alongside every frame. Labels persist until explicitly changed or cleared.
+
+    Use keyboard shortcuts or the UI buttons:
+
+    | Key | Button | Label written to log |
+    |---|---|---|
+    | `1` | **Good** | `good` |
+    | `2` | **Too Much** | `too_much` |
+    | `3` | **Too Flat** | `too_flat` |
+    | `0` | **Clear Label** | `null` |
+
+    Labels appear in `frames_*.jsonl` on every frame while active. Use them in real time to annotate sessions with your subjective quality assessment — this is the primary human feedback signal for offline training.
+  </Step>
+
+</Steps>
+
+## Input recording
+
+To capture the raw microphone or line input audio alongside the frame log, enable **Record Input Audio (CAF)** in the UI before pressing **Start**. You can also control it via a launch argument:
+
+```bash
+# Enable input recording
+TheTubHarness --record-input-audio true
+
+# Disable (default)
+TheTubHarness --record-input-audio false
+```
+
+When enabled, the session directory contains an additional `input_<session_id>.caf` file time-aligned to the frame log. This file is used by the replay system to inject the original audio back into the DSP graph during session replay.
+
+## Session artifacts
+
+Session files are written to:
+
+```
+sessions/
+└── <session_id>/
+    ├── frames_<session_id>.jsonl        # 10 Hz frame log
+    ├── events_<session_id>.jsonl        # discrete event log
+    ├── session_meta_<session_id>.json   # metadata, bundle ID, contract fingerprint
+    └── input_<session_id>.caf           # raw input audio (recording enabled only)
+```
+
+A bundle manifest is also written at `bundles/bundle_<YYYY-MM-DD>_<rev>.json` to link the session to the policy and contract version used.
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the full system design behind the run loop, DSP engine, and logging subsystem.
+  </Card>
+  <Card title="Live run guide" icon="play" href="/running/live-run">
+    Detailed guidance on run profiles, session management, and monitoring a live session.
+  </Card>
+  <Card title="Replay mode" icon="rotate-left" href="/running/replay-mode">
+    Replay recorded sessions headlessly or through the UI with optional audio injection.
+  </Card>
+  <Card title="Log schema" icon="database" href="/reference/log-schema">
+    Full schema for frames, events, and session metadata JSONL files.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

@@ -1,0 +1,186 @@
+---
+title: "Session Metadata"
+description: "Format of session_meta_<session_id>.json — the per-session index file written at session start and finalized on close."
+---
+
+Each session directory contains a `session_meta_<session_id>.json` file that acts as an index and configuration record for the session. It is written once when the session opens and overwritten atomically when the session closes with final values (audio capture info, alignment data, and replay context).
+
+The file is always present, even if the session ends abnormally. The alignment sub-object may contain zero values if the audio engine never started.
+
+## When it is written
+
+1. **On session open** — immediately after the session directory and log files are created. Sample rate, channels, and alignment are initialized to zero at this point.
+2. **On session close** — overwritten atomically with the finalized values including audio capture info, device routing, and alignment timestamps.
+
+## Example
+
+```json
+{
+  "session_id": "2026-03-24T10-05-00Z_a1b2c3",
+  "bundle_id": "bundle_2026-03-24_a1b2c3-policyabc",
+  "created_at": "2026-03-24T10:05:00Z",
+  "sample_rate": 48000.0,
+  "channels": 1,
+  "input_audio_format": "caf",
+  "input_audio_path": "/Users/user/Library/Application Support/TheTubHarness/sessions/2026-03-24T10-05-00Z_a1b2c3/input_2026-03-24T10-05-00Z_a1b2c3.caf",
+  "frames_path": "/Users/user/Library/Application Support/TheTubHarness/sessions/2026-03-24T10-05-00Z_a1b2c3/frames_2026-03-24T10-05-00Z_a1b2c3.jsonl",
+  "events_path": "/Users/user/Library/Application Support/TheTubHarness/sessions/2026-03-24T10-05-00Z_a1b2c3/events_2026-03-24T10-05-00Z_a1b2c3.jsonl",
+  "frame_hz": 10,
+  "record_input_audio_enabled": true,
+  "replay_mode": false,
+  "replayed_session_id": null,
+  "replay_audio_missing": false,
+  "input_device_uid": "AppleHDAEngineInput:1B,0,1,1:0",
+  "input_device_name": "MacBook Pro Microphone",
+  "input_channels": 1,
+  "input_active_channels": "mono",
+  "input_route_warning": null,
+  "output_device_uid": "AppleHDAEngineOutput:1B,0,1,2:0",
+  "output_device_name": "MacBook Pro Speakers",
+  "output_channels": 2,
+  "output_route_mode": "stereo",
+  "output_route_mapping": "L=0,R=1",
+  "output_route_warning": null,
+  "alignment": {
+    "start_ts_ms": 1711334401234,
+    "audio_start_host_time": 8234567890123,
+    "audio_start_sample_index": 48000
+  }
+}
+```
+
+---
+
+## Fields
+
+### Identity
+
+<ResponseField name="session_id" type="string">
+  Unique session identifier. Used as the key in all file names within the session directory.
+</ResponseField>
+
+<ResponseField name="bundle_id" type="string">
+  The run bundle ID active when this session was created. Encodes the date, harness git short SHA, and a hash of the policy config. Matches `bundle_id` in every frame log line for this session.
+</ResponseField>
+
+<ResponseField name="created_at" type="string (ISO 8601)">
+  UTC timestamp at the moment the session was created, e.g. `"2026-03-24T10:05:00Z"`.
+</ResponseField>
+
+### Audio capture
+
+<ResponseField name="sample_rate" type="float">
+  Sample rate of the audio engine in Hz (e.g. `48000.0`). Written as `0` initially and updated when the audio engine reports its configuration.
+</ResponseField>
+
+<ResponseField name="channels" type="integer">
+  Number of channels in the captured audio stream.
+</ResponseField>
+
+<ResponseField name="input_audio_format" type='"caf" | "wav"'>
+  Container format of the recorded input audio file. Defaults to `"caf"`. Can be overridden to `"wav"` via launch argument or audio engine configuration.
+</ResponseField>
+
+<ResponseField name="input_audio_path" type="string | null">
+  Absolute path to the recorded input audio file. `null` when `record_input_audio_enabled` is `false` or when input recording was not available for this session.
+</ResponseField>
+
+<ResponseField name="frames_path" type="string">
+  Absolute path to the frame log JSONL file for this session. See [Log Schema](/reference/log-schema).
+</ResponseField>
+
+<ResponseField name="events_path" type="string">
+  Absolute path to the events JSONL file for this session. See [Events Log](/reference/events-log).
+</ResponseField>
+
+<ResponseField name="frame_hz" type="integer">
+  Expected frame rate of the frame log. Always `10`.
+</ResponseField>
+
+<ResponseField name="record_input_audio_enabled" type="boolean">
+  Whether input audio recording was active for this session. When `false`, `input_audio_path` is `null` and no `.caf`/`.wav` file is written.
+</ResponseField>
+
+### Device routing
+
+<ResponseField name="input_device_uid" type="string | null">
+  CoreAudio UID of the input device (e.g. `"AppleHDAEngineInput:1B,0,1,1:0"`). `null` if not resolved.
+</ResponseField>
+
+<ResponseField name="input_device_name" type="string | null">
+  Human-readable name of the input device (e.g. `"MacBook Pro Microphone"`).
+</ResponseField>
+
+<ResponseField name="input_channels" type="integer | null">
+  Total channel count reported by the input device.
+</ResponseField>
+
+<ResponseField name="input_active_channels" type="string | null">
+  Description of which input channels are actively used (e.g. `"mono"`, `"L+R"`).
+</ResponseField>
+
+<ResponseField name="input_route_warning" type="string | null">
+  Non-null when the audio engine detected a routing problem on input (e.g. device changed mid-session, unexpected channel count). Used to flag sessions that may have degraded audio quality.
+</ResponseField>
+
+<ResponseField name="output_device_uid" type="string | null">
+  CoreAudio UID of the output device.
+</ResponseField>
+
+<ResponseField name="output_device_name" type="string | null">
+  Human-readable name of the output device.
+</ResponseField>
+
+<ResponseField name="output_channels" type="integer | null">
+  Total channel count reported by the output device.
+</ResponseField>
+
+<ResponseField name="output_route_mode" type="string | null">
+  Output routing mode (e.g. `"stereo"`, `"mono"`, `"multichannel"`).
+</ResponseField>
+
+<ResponseField name="output_route_mapping" type="string | null">
+  Channel-to-speaker mapping string (e.g. `"L=0,R=1"`).
+</ResponseField>
+
+<ResponseField name="output_route_warning" type="string | null">
+  Non-null when the audio engine detected a routing problem on output.
+</ResponseField>
+
+### Replay fields
+
+<ResponseField name="replay_mode" type="boolean">
+  `true` when this session was created by a replay run (headless `--replay` or UI session replay) rather than live audio input.
+</ResponseField>
+
+<ResponseField name="replayed_session_id" type="string | null">
+  When `replay_mode` is `true`, the `session_id` of the original session whose frame log is being replayed. `null` for live sessions and for trace-file replays that do not originate from a session ID.
+</ResponseField>
+
+<ResponseField name="replay_audio_missing" type="boolean">
+  `true` when a replay was started with a `replayed_session_id` but no corresponding input audio file (`input_<id>.caf` or `.wav`) was found. Frame replay still proceeds; this flag is informational for downstream analysis.
+</ResponseField>
+
+### Audio alignment
+
+The `alignment` sub-object records three timestamps that allow frame log events to be synchronized with the recorded input audio file at sample accuracy.
+
+<ResponseField name="alignment.start_ts_ms" type="integer">
+  The `ts_ms` of the first frame appended to the frame log. This is the wall-clock anchor for the frame sequence. Zero if no frames were written.
+</ResponseField>
+
+<ResponseField name="alignment.audio_start_host_time" type="integer (uint64)">
+  The CoreAudio host time (`mach_absolute_time`-derived) at the moment the first audio buffer was received by the input tap. Used to align frame timestamps to audio sample positions with sub-millisecond accuracy. Zero if the audio engine never started.
+</ResponseField>
+
+<ResponseField name="alignment.audio_start_sample_index" type="integer (int64)">
+  The `AVAudioTime.sampleTime` of the first audio buffer received by the input tap. Combined with `audio_start_host_time` and `sample_rate`, this allows any frame's `ts_ms` to be mapped to a sample offset in the `.caf`/`.wav` file. Zero if not available.
+</ResponseField>
+
+---
+
+## Related pages
+
+- [Log Schema](/reference/log-schema) — frame log format
+- [Events Log](/reference/events-log) — events log format
+- [Session Artifacts](/running/session-artifacts) — directory layout and file locations

@@ -1,0 +1,110 @@
+---
+title: "Mode 9: 3-Band Spatial Split"
+description: "The dry input is split into low, mid, and high frequency bands that spread and move independently in space. No MIDI or particle-synthesis behavior."
+---
+
+Mode 9 applies independent spatial treatment to three frequency bands of the dry input. The low, mid, and high bands are routed to separate spatial positions and move at rates governed by `motion_speed` and `spread`. The output is still the dry input — no synthesis, no MIDI, no sampler — but each band has its own position in the spatial field, so the sound appears to spread and separate by frequency.
+
+<Note>
+Despite the `particle_` prefix on several parameter names, Mode 9 does not trigger any particle synthesis or MIDI playback. The terminology reflects an earlier design that used particles as a metaphor for spatially-distributed signal fragments. The parameter names are retained for contract stability.
+</Note>
+
+## Band level derivation
+
+Band levels are computed from `particle_density` and `particle_brightness`, not set directly:
+
+```
+band_low   = clamp(0.20 + 0.70 × (1.0 - brightness) + 0.20 × density,  0.15, 1.0)
+band_mid   = clamp(0.30 + 0.55 × (1.0 - |0.5 - brightness| × 2.0),     0.15, 1.0)
+band_high  = clamp(0.25 + 0.75 × brightness,                             0.15, 1.0)
+```
+
+After derivation, bands are normalized so `low + mid + high = 1.0`. This means you cannot set absolute band levels — the shape is controlled by `particle_density` (biases toward low) and `particle_brightness` (biases toward high). The floor of `0.15` after normalization ensures no band is ever fully silenced.
+
+## Parameters
+
+<ParamField path="particle_density" type="float">
+  Biases band energy toward the low end. Range: 0–1 (normalized). Safe default: `0.42`. Higher density pushes more weight into `band_low_level`. Also influences reverb wet level: `reverb_wet = min(0.40, 0.08 + 0.28 × density + ...)`.
+</ParamField>
+
+<ParamField path="particle_voice_cap" type="float">
+  Maximum number of concurrent spatial "particle" slots (spatial processing instances). Range: 1–24. Safe default: `8.0`. Despite the name, this controls spatial processing concurrency, not MIDI voices. Higher values allow more simultaneous spatial instances, which affects how densely the band content populates the spatial field. Also has a minor influence on reverb wet: `... + 0.12 × normalize(voice_cap, 1, 24)`.
+</ParamField>
+
+<ParamField path="particle_decay_s" type="float">
+  Decay time for the reverb applied to the spatially-split bands. Range: 0.05–2.5 s. Safe default: `0.55`. Directly sets `reverb_decay` (normalized against the `[0.05, 2.5]` range). Shorter values produce a tight, percussive spatial tail; longer values create a lingering spread.
+</ParamField>
+
+<ParamField path="particle_brightness" type="float">
+  Biases band energy toward the high end. Range: 0–1 (normalized). Safe default: `0.45`. Higher brightness increases `band_high_level` and decreases `band_low_level`. Also controls reverb damping: `reverb_damping = 0.25 + 0.60 × brightness` — brighter settings produce less-damped (airier) reverb.
+</ParamField>
+
+<ParamField path="motion_speed" type="float">
+  Speed at which the band spatial positions move. Range: 0–1 (normalized). Safe default: `0.35`. Applies uniformly to all three bands via `band_motion_speed`. The reverb crossfade time is also derived from motion speed: `xfade = 250 + 750 × clamp(0.30 + 0.60 × motion_speed, 0, 1)` ms.
+</ParamField>
+
+<ParamField path="spread" type="float">
+  Width of the spatial spread applied to the bands. Range: 0–1 (normalized). Safe default: `0.65`. Higher values cause the low, mid, and high bands to occupy positions further apart in the spatial field. At `0.0` all bands would collapse toward center; in practice the floor applied by the audio graph keeps bands from fully collapsing.
+</ParamField>
+
+## Safe defaults
+
+```json
+{
+  "particle_density": 0.42,
+  "particle_voice_cap": 8.0,
+  "particle_decay_s": 0.55,
+  "particle_brightness": 0.45,
+  "motion_speed": 0.35,
+  "spread": 0.65
+}
+```
+
+## Default picks
+
+```json
+{
+  "preset_id": "field_diffuse",
+  "bank_id": "particles_A",
+  "midi_inst_id": "inst_P",
+  "spatial_pattern_id": "orbit_mid"
+}
+```
+
+<Note>
+`bank_id` and `midi_inst_id` are present in the default picks for manifest routing purposes but do not trigger any active MIDI or sampler behavior in Mode 9. The harness resolves these picks against the manifest catalog at startup; they are retained for possible future use and to satisfy manifest validation.
+</Note>
+
+## Legacy aliases
+
+The following legacy param names are accepted and rescaled to their canonical counterparts:
+
+| Legacy name | Canonical name | Transform |
+|-------------|---------------|-----------|
+| `density` | `particle_density` | identity (0–1) |
+| `band_low_level` | `particle_density` | identity (0–1) |
+| `band_low` | `particle_density` | identity (0–1) |
+| `band_high_level` | `particle_brightness` | identity (0–1) |
+| `band_high` | `particle_brightness` | identity (0–1) |
+| `band_motion_speed` | `motion_speed` | identity (0–1) |
+| `reverb_decay` | `particle_decay_s` | `linear(0.05, 2.5)` |
+
+<Warning>
+If both `band_low_level` and `band_high_level` are sent as legacy aliases, they map to `particle_density` and `particle_brightness` respectively — they are **not** direct band level controls. The actual band levels are derived from these two values via the formula above. Expecting them to behave as independent gain controls for each band is incorrect.
+</Warning>
+
+## What to verify by ear
+
+- The low, mid, and high bands should be **audibly distinct in space** — the bass should appear to come from a different direction than the treble. If all bands collapse to the same position, inspect `spread` and `spatial_pattern_id`.
+- The sound should be recognizably the **dry input** — processed and spatially separated, but not synthesized. No tones, no MIDI attacks, no sample playback. If you hear anything that sounds like a triggered note or synthesized pitch, the mode routing is incorrect.
+- Increasing `particle_brightness` should make the sound brighter (more high-band energy) and also reduce reverb damping, making the spatial tail airier. Both effects should be audible together.
+- Increasing `particle_density` should increase low-band energy and also make the reverb slightly wetter. At maximum density the low band dominates and the reverb tail is noticeably fuller.
+- `particle_decay_s` changes should be clearly audible as reverb tail length. At `0.05 s` the spatial tail is nearly dry; at `2.5 s` bands leave a long, sustained spatial echo.
+- `motion_speed` changes the rate at which band positions orbit/drift. The movement should affect all three bands simultaneously at the same speed.
+
+## See also
+
+- [Mode 8: Spatial Dry + Diffuse Verb](/modes/mode-8-spatial-dry) — single-band spatial dry with explicit reverb controls
+- [Mode 7: Swap Buckets](/modes/mode-7-swap-buckets) — spectral band swapping, not spatial splitting
+- [reference/mode-contract](/reference/mode-contract)
+- [reference/param-bounds](/reference/param-bounds)

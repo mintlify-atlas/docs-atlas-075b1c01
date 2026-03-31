@@ -1,0 +1,91 @@
+---
+title: "DSP Modes Overview"
+description: "The Tub Harness processes live audio through 11 DSP modes (0–10). Each mode shapes both the audio path and the visual stage output."
+---
+
+## Selecting a Mode
+
+Mode is set exclusively via the **UI mode switch** in the app. The harness never flips modes autonomously as a safety response — mode always follows the switch only.
+
+<Note>
+  Mode must be in the range `0...10`. Values outside this range are rejected by the protocol. The current mode is included in every `ModelIn` packet and must be echoed back in `ModelOut`.
+</Note>
+
+## Safety Rails (All Modes)
+
+These constraints hold regardless of mode:
+
+- Reverb wet is capped at `≤ 0.50`; decay is bounded per mode.
+- Master limiter ceiling: `−1 dBFS`.
+- No mode flip as a safety response.
+- Non-finite params are rejected; unknown params are rejected.
+- Hard violations trigger deterministic safe defaults for the current mode.
+
+## Mode Reference
+
+<CardGroup cols={2}>
+  <Card title="Mode 0: Clean" href="modes/mode-0-clean">
+    Mostly dry input with subtle room reverb and minimal motion. The lowest-intervention mode — suitable as a baseline and for checking input signal integrity.
+  </Card>
+  <Card title="Mode 1: Beat Repeat" href="modes/mode-1-beat-repeat">
+    Onset- and threshold-gated stutters quantized to a grid (`1/8` or `1/16`). Spatial changes step on the grid. Requires `grid_div` and `repeat_style_id` picks.
+  </Card>
+  <Card title="Mode 2: Granulator" href="modes/mode-2-granulator">
+    Discontinuous "shattered time" texture from the live input. Grain density responds quickly; freeze probability introduces held, suspended grain clouds.
+  </Card>
+  <Card title="Mode 3: Roar/Resonator" href="modes/mode-3-roar-resonator">
+    Resonant wet layer over a punchy dry signal. Drive and bit reduction are bounded; distortion character remains controlled even at high values.
+  </Card>
+  <Card title="Mode 4: Clean + Samples + Resynthesis" href="modes/mode-4-clean-samples">
+    Clean bed always present; a gesture layer adds sparse sample and resynthesis responses with bounded concurrency. Requires `bank_id` and `sample_id` picks.
+  </Card>
+  <Card title="Mode 5: MIDI Resonification (Wet Only)" href="modes/mode-5-midi-resonification">
+    Only the resonifier/sampler layer is audible — dry path is silent. CLEAR releases voices; JOLT audibly pushes harmony and energy. Hard cap: 8 voices, 12 notes/sec.
+  </Card>
+  <Card title="Mode 6: Parallel Dry + Resonifier" href="modes/mode-6-parallel-dry">
+    Dry input stays centered while resonifier voices are spatialized. CLEAR releases voices cleanly. Hard cap: 3 voices, 6 notes/sec.
+  </Card>
+  <Card title="Mode 7: Swap Buckets" href="modes/mode-7-swap-buckets">
+    Wet-dominant stepped spectral redistribution with deterministic bucket-scene swaps and crossfaded handoffs. Band roles audibly move rather than filtering broadly.
+  </Card>
+  <Card title="Mode 8: Spatial Dry + Diffuse Verb" href="modes/mode-8-spatial-dry">
+    Dry image moves as a single point source; reverb stays diffuse. Suited for spatial motion work without grain or MIDI behavior.
+  </Card>
+  <Card title="Mode 9: 3-Band Spatial Split" href="modes/mode-9-3band-spatial">
+    Low, mid, and high portions of the dry input spread differently in space. No particle or MIDI behavior.
+  </Card>
+  <Card title="Mode 10: Special" href="modes/mode-10-special">
+    Reserved special mode. Requires a `scene_id` pick.
+  </Card>
+</CardGroup>
+
+## Protocol Contract
+
+All mode behavior is governed by Protocol v2 (`control_surface_v2`). The contract fingerprint is pinned in `ModeContract.lockedContractFingerprint`. A mismatch between the harness fingerprint and the model fingerprint is a **release blocker**.
+
+Run bundles include `contract_fingerprint`. At startup, the harness logs `lock=ok` or `lock=mismatch`.
+
+```bash
+# Verify contract lock status in logs
+running bundle <bundle_id> (policy=..., banks=..., contract=...) fp=<prefix> lock=ok|mismatch
+```
+
+### Required Picks (All Modes)
+
+Every mode requires `preset_id` and `spatial_pattern_id`. Additional required picks per mode:
+
+| Mode | Additional Required Picks |
+|------|--------------------------|
+| 1    | `grid_div`, `repeat_style_id` |
+| 4    | `bank_id`, `sample_id` |
+| 5    | `midi_inst_id`, `chord_set_id` |
+| 6    | `midi_inst_id`, `chord_set_id` |
+| 10   | `scene_id` |
+
+Missing required picks are a hard violation and trigger safe defaults.
+
+### Visual Head (Required in Protocol v2)
+
+`ModelOut.visual` is required. Every response must include: `scene_id`, `density`, `cohesion`, `disruption`, `token_salience`, `wordmark_integrity`, `decay_ms`, `flash_bias`, and `anchor_weights` (exactly 3 values).
+
+Valid `scene_id` values: `grid_lock`, `relay_mesh`, `fault_lattice`, `memory_drift`, `alarm_splay`, `quiet_watch`.

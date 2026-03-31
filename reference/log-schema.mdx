@@ -1,0 +1,298 @@
+---
+title: "Log Schema"
+description: "JSONL training substrate schema — what gets logged, why, and how every frame field is structured."
+---
+
+The harness records every 10 Hz control cycle as a line of JSON to disk. These logs are the training substrate: they capture the full round-trip between the feature extractor, the model, and the audio engine — including every intervention, label, and diagnostic — so that sessions can be replayed, analyzed, and used to improve the model.
+
+## Session directory structure
+
+All artifacts for a session are written under a single directory:
+
+```
+sessions/<session_id>/
+  frames_<session_id>.jsonl        # 10 Hz frame log (primary training data)
+  events_<session_id>.jsonl        # Session lifecycle events
+  session_meta_<session_id>.json   # Session metadata (written on start, finalized on close)
+  input_<session_id>.caf           # Recorded input audio (optional, when enabled)
+```
+
+See [Session Metadata](/reference/session-metadata) and [Events Log](/reference/events-log) for those file formats.
+
+---
+
+## Frame log (`frames_<session_id>.jsonl`)
+
+One JSON object per frame, written at 10 Hz for the duration of the session. Each line is a complete snapshot of a single control cycle: the audio features that were measured, the exact packet sent to the model, the model's response (or null on failure), all harness interventions, the current human label, and per-cycle diagnostics.
+
+<Note>
+  `frame_hz` is always `10`. It is recorded in each frame for schema self-description purposes and for compatibility with future variable-rate logging.
+</Note>
+
+### Example frame
+
+```json
+{
+  "ts_ms": 1711334401234,
+  "frame_index": 42,
+  "session_id": "2026-03-24T10-05-00Z_a1b2c3",
+  "frame_hz": 10,
+  "replay_mode": false,
+  "input_source": "live",
+  "mode": 2,
+  "buttons": { "jolt": false, "clear": false },
+  "features": {
+    "loudness_lufs": -22.4,
+    "onset_rate_hz": 3.1,
+    "spec_centroid_hz": 1850.0,
+    "band_low": 0.31,
+    "band_mid": 0.52,
+    "band_high": 0.17,
+    "noisiness": 0.44,
+    "pitch_hz": 220.0,
+    "pitch_conf": 0.78,
+    "key_estimate": "A",
+    "key_conf": 0.62
+  },
+  "state": { "overload": false, "cooldown": 0, "last_mode_ms": 0 },
+  "model_in": { "protocol_version": 2, "ts_ms": 1711334401234, "session_id": "...", "frame_hz": 10, "mode": 2, "buttons": { "jolt": false, "clear": false }, "features": { "..." : "..." }, "state": { "..." : "..." } },
+  "model_out": {
+    "protocol_version": 2,
+    "ts_ms": 1711334401251,
+    "mode": 2,
+    "params": { "grain_density": 0.55, "grain_size_ms": 44.0, "scan_rate": 0.38 },
+    "picks": { "preset_id": "gran_A", "spatial_pattern_id": "orbit_slow" },
+    "flags": { "request_cooldown": false, "prefer_stability": false, "thin_events": false, "reset_voices": false }
+  },
+  "diagnostics": {
+    "request_id": 42,
+    "send_ts_ms": 1711334401234,
+    "recv_ts_ms": 1711334401251,
+    "round_trip_ms": 17,
+    "timed_out": false,
+    "decode_error": null,
+    "interventions": []
+  },
+  "interventions": {
+    "limiter_hit": false,
+    "density_cap": false,
+    "voice_cap": false,
+    "cpu_guard": false,
+    "reset_voices": false,
+    "timeout": false,
+    "decode_error": false,
+    "contract_violation": false,
+    "pick_fallback": false,
+    "feature_fallback": false,
+    "extras": []
+  },
+  "label": "good",
+  "bundle_id": "bundle_2026-03-24_a1b2c3-policyabc"
+}
+```
+
+### Top-level fields
+
+<ResponseField name="ts_ms" type="integer">
+  Frame timestamp in milliseconds since Unix epoch. Recorded at the moment the frame loop fires, before the UDP send.
+</ResponseField>
+
+<ResponseField name="frame_index" type="integer">
+  Monotonically increasing frame counter within the session. Starts at 1.
+</ResponseField>
+
+<ResponseField name="session_id" type="string">
+  Session identifier. Matches the session directory name and the `session_id` field in `ModelIn`.
+</ResponseField>
+
+<ResponseField name="frame_hz" type="integer">
+  Expected frame rate. Always `10`.
+</ResponseField>
+
+<ResponseField name="replay_mode" type="boolean">
+  `true` when this frame was produced by a replay run rather than live audio input.
+</ResponseField>
+
+<ResponseField name="input_source" type='"live" | "replay_file"'>
+  Source of the audio features for this frame. `"live"` means the microphone or line input. `"replay_file"` means features were read from a previously recorded session's input audio file.
+</ResponseField>
+
+<ResponseField name="mode" type="integer">
+  The DSP mode active for this frame. Integer in the range 0–10. Mode follows the UI switch; it is never changed as a safety response.
+</ResponseField>
+
+<ResponseField name="buttons" type="object">
+  Button state snapshot sent with this frame.
+
+  <Expandable title="buttons fields">
+    <ResponseField name="jolt" type="boolean">
+      Whether the Jolt button was held at frame time. Jolt raises energy and density momentarily.
+    </ResponseField>
+    <ResponseField name="clear" type="boolean">
+      Whether the Clear button was pressed. In modes 5 and 6, Clear releases resonifier voices.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="features" type="object">
+  The audio feature vector extracted from the current input buffer and sent in `ModelIn`. All values are computed from real input — there is no synthetic fallback.
+
+  <Expandable title="features fields">
+    <ResponseField name="loudness_lufs" type="float">
+      Short-term integrated loudness in LUFS.
+    </ResponseField>
+    <ResponseField name="onset_rate_hz" type="float">
+      Detected onset rate in onsets per second.
+    </ResponseField>
+    <ResponseField name="spec_centroid_hz" type="float">
+      Spectral centroid frequency in Hz.
+    </ResponseField>
+    <ResponseField name="band_low" type="float [0–1]">
+      Normalized energy in the low frequency band.
+    </ResponseField>
+    <ResponseField name="band_mid" type="float [0–1]">
+      Normalized energy in the mid frequency band.
+    </ResponseField>
+    <ResponseField name="band_high" type="float [0–1]">
+      Normalized energy in the high frequency band.
+    </ResponseField>
+    <ResponseField name="noisiness" type="float [0–1]">
+      Spectral flatness measure: 0 = tonal, 1 = noise-like.
+    </ResponseField>
+    <ResponseField name="pitch_hz" type="float | null">
+      Estimated fundamental frequency in Hz. Null when no clear pitch is detected.
+    </ResponseField>
+    <ResponseField name="pitch_conf" type="float [0–1]">
+      Confidence score for `pitch_hz`.
+    </ResponseField>
+    <ResponseField name="key_estimate" type="string | null">
+      Estimated musical key (e.g. `"A"`, `"Bb"`). Null when confidence is too low.
+    </ResponseField>
+    <ResponseField name="key_conf" type="float [0–1]">
+      Confidence score for `key_estimate`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="state" type="object | null">
+  Optional `HarnessState` snapshot sent in `ModelIn`. Includes internal overload, cooldown counter, and time since last mode change.
+
+  <Expandable title="state fields">
+    <ResponseField name="overload" type="boolean">
+      Whether CPU overload was active at frame time.
+    </ResponseField>
+    <ResponseField name="cooldown" type="integer">
+      Remaining cooldown frames following a high-load event.
+    </ResponseField>
+    <ResponseField name="last_mode_ms" type="integer">
+      Timestamp of the most recent mode switch, in ms since epoch.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="model_in" type="object">
+  The exact `ModelIn` JSON payload sent to the model server over UDP. Recorded verbatim for full replay fidelity.
+</ResponseField>
+
+<ResponseField name="model_out" type="object | null">
+  The `ModelOut` response decoded from the model server. `null` when the request timed out or the response could not be decoded. When `null`, the harness applies safe defaults for the current mode; see [Safety Rails](/reference/safety-rails).
+</ResponseField>
+
+<ResponseField name="diagnostics" type="object">
+  Per-frame request diagnostics.
+
+  <Expandable title="diagnostics fields">
+    <ResponseField name="request_id" type="integer">
+      Monotonically increasing request counter within the session.
+    </ResponseField>
+    <ResponseField name="send_ts_ms" type="integer">
+      Timestamp immediately before the UDP send, in ms since epoch.
+    </ResponseField>
+    <ResponseField name="recv_ts_ms" type="integer | null">
+      Timestamp immediately after receiving the UDP response, in ms since epoch. Null on timeout.
+    </ResponseField>
+    <ResponseField name="round_trip_ms" type="integer | null">
+      `recv_ts_ms - send_ts_ms`. Null on timeout.
+    </ResponseField>
+    <ResponseField name="timed_out" type="boolean">
+      `true` when no response was received within the frame budget.
+    </ResponseField>
+    <ResponseField name="decode_error" type="string | null">
+      Error description when JSON decoding of `ModelOut` failed. Null on success.
+    </ResponseField>
+    <ResponseField name="interventions" type="string[]">
+      Raw intervention tag strings collected during this frame's processing pipeline. These are the canonical source for the structured `interventions` object at the top level.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="interventions" type="object">
+  Structured view of all harness interventions that fired during this frame. See [Interventions field details](#interventions-field-details) below.
+</ResponseField>
+
+<ResponseField name="label" type='"good" | "too_much" | "too_flat" | null'>
+  The current sticky human label at frame time. Applied via the UI or keyboard shortcuts (1 = good, 2 = too_much, 3 = too_flat, 0 = clear). Label changes are also recorded as separate events in the [Events Log](/reference/events-log).
+</ResponseField>
+
+<ResponseField name="bundle_id" type="string">
+  The run bundle identifier active for this session. Encodes date, harness git SHA, and policy version hash. The bundle's full metadata (including `contract_fingerprint`) is written to `events_<session_id>.jsonl` as a `bundle_header` event at session start.
+</ResponseField>
+
+---
+
+## Interventions field details
+
+Every time the harness overrides, clamps, or substitutes model output, it records an intervention. The `interventions` object is derived from the raw string tags in `diagnostics.interventions`.
+
+<ResponseField name="limiter_hit" type="boolean">
+  The master limiter engaged this frame, catching a peak that would have exceeded −1 dBFS. Normal limiting does not change mode or params.
+</ResponseField>
+
+<ResponseField name="density_cap" type="boolean">
+  A density or related param was clamped at its upper bound by the contract enforcer. Triggered by `density_cap` or `param_clamped_high:density` tags.
+</ResponseField>
+
+<ResponseField name="voice_cap" type="boolean">
+  A voice count param was clamped by the per-mode hard cap (mode 5: max 8 voices; mode 6: max 3 voices; mode 9: `particle_voice_cap` bounded 1–24).
+</ResponseField>
+
+<ResponseField name="cpu_guard" type="boolean">
+  The CPU guard throttled voice concurrency this frame because render time exceeded the audio thread budget.
+</ResponseField>
+
+<ResponseField name="reset_voices" type="boolean">
+  A voice reset was issued this frame (triggered by the Clear button or a `reset_voices` flag in `ModelOut` for modes 5 and 6).
+</ResponseField>
+
+<ResponseField name="timeout" type="boolean">
+  The model server did not respond within the frame budget. Safe defaults for the current mode were applied.
+</ResponseField>
+
+<ResponseField name="decode_error" type="boolean">
+  The UDP response was received but could not be decoded as a valid `ModelOut`. Safe defaults were applied. The raw error description is in `diagnostics.decode_error`.
+</ResponseField>
+
+<ResponseField name="contract_violation" type="boolean">
+  One or more fields in `ModelOut` violated the mode contract (unknown param, out-of-bounds value, missing required pick, wrong protocol version). The harness applied safe defaults rather than changing mode.
+</ResponseField>
+
+<ResponseField name="pick_fallback" type="boolean">
+  One or more pick IDs in `ModelOut` did not resolve against the manifest catalog, and a deterministic per-mode default was substituted. Logged at most once per mode per session to avoid noise.
+</ResponseField>
+
+<ResponseField name="feature_fallback" type="boolean">
+  The feature extractor could not produce a valid feature vector (e.g. no audio input) and a fallback feature set was used.
+</ResponseField>
+
+<ResponseField name="extras" type="string[]">
+  Full list of raw intervention tag strings for this frame. Contains all tags, including those covered by the structured boolean fields above. Useful for debugging novel or compound interventions.
+</ResponseField>
+
+---
+
+## Related pages
+
+- [Session Metadata](/reference/session-metadata) — `session_meta_<session_id>.json` format
+- [Events Log](/reference/events-log) — `events_<session_id>.jsonl` format
+- [Safety Rails](/reference/safety-rails) — what the harness enforces and when interventions fire
+- [Session Artifacts](/running/session-artifacts) — where files are written on disk

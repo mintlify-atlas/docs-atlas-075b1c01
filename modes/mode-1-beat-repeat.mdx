@@ -1,0 +1,108 @@
+---
+title: "Mode 1: Beat Repeat"
+description: "Onset- and threshold-gated stutters quantized to a rhythmic grid. Spatial changes step on-grid."
+---
+
+## Overview
+
+Mode 1 captures and repeats segments of the live input using onset detection and threshold gating. Stutters are quantized to a rhythmic grid (`1/8` or `1/16`). The spatial stage updates on-grid rather than continuously — position jumps happen at grid boundaries, reinforcing the rhythmic structure.
+
+`fracture` drives stutter probability and onset sensitivity. `mutation` controls timing randomness within the stutter. Together they determine how chaotic vs. locked the repeat pattern sounds.
+
+**Default picks:** `preset_id=beat_A`, `spatial_pattern_id=orbit_pulse`, `grid_div=1/8`, `repeat_style_id=stutter_a`
+
+<Note>
+  CLEAR and JOLT are active in Mode 1. CLEAR cancels the current hold buffer and releases the stutter gate. JOLT raises level, wet, and reverb mix and boosts `motion_speed` — expect an audible energy surge.
+</Note>
+
+## Parameters
+
+<ParamField path="fracture" type="float">
+  Stutter probability and onset gate sensitivity. Range: `0.0–1.0`. Safe default: `0.58`. Low values mean only strong onsets trigger repeats; high values produce near-continuous fragmentation. Also sets the floor for `spread` (`spread ≥ 0.45 + 0.35 × fracture`).
+</ParamField>
+
+<ParamField path="mutation" type="float">
+  Timing randomness and gate character within each stutter. Range: `0.0–1.0`. Safe default: `0.42`. Low values produce tight, machine-like repeats; higher values introduce irregular timing drift and gate shape variation.
+</ParamField>
+
+<ParamField path="pitch_lock" type="float">
+  How strictly the pitch of captured segments is locked to the source pitch. Range: `0.0–1.0`. Safe default: `0.68`. Higher values maintain pitch fidelity; lower values allow drift and detune during the hold.
+</ParamField>
+
+<ParamField path="hold_len_s" type="float">
+  Duration of the hold/loop buffer in seconds. Range: `6–12 s`. Safe default: `8.0 s`. This is the window from which stutter segments are drawn. Shorter values pull from a tighter recent slice; longer values give the engine a broader memory to work with.
+</ParamField>
+
+<ParamField path="tail_fade_ms" type="float">
+  Fade-out duration of the stutter tail after the hold gate releases, in milliseconds. Range: `150–1200 ms`. Safe default: `480 ms`. Short values produce abrupt cutoffs; long values let the stutter tail blend gracefully back to the live signal.
+</ParamField>
+
+<ParamField path="scene_rate_hz" type="float">
+  Rate at which spatial scene changes step, in Hz. Range: `0.25–12 Hz`. Safe default: `3.0 Hz`. Lower values mean infrequent, slower scene transitions; higher values produce rapid, rhythmic spatial movement. This is the primary driver of on-grid spatial stepping.
+</ParamField>
+
+<ParamField path="motion_speed" type="float">
+  Overall speed of spatial image movement between scene steps. Range: `0.0–1.0`. Safe default: `0.45`. Internally floored at `0.22 + 0.60 × normalize(scene_rate_hz)` to keep motion coherent with the scene rate.
+</ParamField>
+
+<ParamField path="spread" type="float">
+  Spatial spread of stutter voices. Range: `0.0–1.0`. Safe default: `0.62`. Internally floored at `0.45 + 0.35 × fracture` — high fracture forces a wider spatial field.
+</ParamField>
+
+## Required Picks
+
+| Pick | Default | Notes |
+|------|---------|-------|
+| `preset_id` | `beat_A` | Reverb preset for this mode |
+| `spatial_pattern_id` | `orbit_pulse` | Drives on-grid spatial stepping |
+| `grid_div` | `1/8` | Quantization grid; accepted values: `1/8`, `1/16` |
+| `repeat_style_id` | `stutter_a` | Controls internal scene ID selection; `stutter_b` maps to `databend` scene |
+
+<Warning>
+  `grid_div` and `repeat_style_id` are required picks. Missing either is a hard contract violation and will cause the harness to fall back to safe defaults for this mode.
+</Warning>
+
+## Safe Defaults
+
+| Parameter | Default |
+|-----------|---------|
+| `fracture` | `0.58` |
+| `mutation` | `0.42` |
+| `pitch_lock` | `0.68` |
+| `hold_len_s` | `8.0 s` |
+| `tail_fade_ms` | `480 ms` |
+| `scene_rate_hz` | `3.0 Hz` |
+| `motion_speed` | `0.45` |
+| `spread` | `0.62` |
+
+## Legacy Aliases
+
+| Legacy Name | Canonical Name | Notes |
+|-------------|---------------|-------|
+| `repeat_prob` | `fracture` | Linear `[0,1] → [0,1]` |
+| `jitter_ms` | `mutation` | Values `> 1.0` treated as raw ms: divided by `120`; values `≤ 1.0` passed directly |
+| `gate_sharpness` | `mutation` | Same transform as `jitter_ms` |
+| `pitch_follow` | `pitch_lock` | Values `> 1.0` normalized from `[0.65, 1.0]`; values `≤ 1.0` passed directly |
+| `feedback` | `hold_len_s` | Normalized from `[0, 0.65]` then mapped to `[6, 12]` |
+| `loop_len_s` | `hold_len_s` | Values `> 1.0` normalized from `[0.08, 4.0]`; `≤ 1.0` treated as `[0,1]` |
+| `window_norm` | `hold_len_s` | Same transform as `loop_len_s` |
+| `repeat_grid` | `hold_len_s` | Same transform as `loop_len_s` |
+| `stutter_len_ms` | `scene_rate_hz` | Inverted: long stutter ms → low rate Hz |
+| `stutter_len_norm` | `scene_rate_hz` | Normalized stutter length inverted to rate |
+| `stutter_len` | `scene_rate_hz` | Same as `stutter_len_norm` |
+| `motion_intensity` | `motion_speed` | Direct remap |
+
+<Info>
+  The `stutter_len_*` → `scene_rate_hz` transform is non-trivial: stutter duration in ms is inverted to a rate in Hz using `rate = 12.0 − (11.75 × t)` where `t` is the normalized stutter length. A stutter of `30 ms` yields `12 Hz`; `450 ms` yields `0.25 Hz`.
+</Info>
+
+## What to Verify by Ear
+
+- Stutters should only fire when the input crosses the onset/threshold — silence should not trigger repeats.
+- At `grid_div=1/8`, spatial steps should align with the felt eighth-note grid of the input material.
+- `fracture=0.58` (default) should produce regular, rhythmically locked stutters. Raising toward `1.0` should fragment the signal into near-continuous chopping.
+- `mutation=0.42` should introduce audible but musical timing variation within repeats. Lowering toward `0.0` tightens the gate to a mechanical feel.
+- `tail_fade_ms=480` should produce a smooth blend back to the live signal after a stutter burst. At `150 ms` the cutoff is abrupt.
+- CLEAR should immediately release any held buffer and return to the live signal.
+- JOLT should cause an audible energy spike — level, wet level, and reverb mix all jump; motion increases.
+- `repeat_style_id=stutter_b` selects the `databend` internal scene; `stutter_a` selects `razor_gate`.

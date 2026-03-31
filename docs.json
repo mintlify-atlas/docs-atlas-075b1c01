@@ -1,122 +1,100 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "The Tub Harness",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#1E3A4F",
+    "light": "#2E5B7A",
+    "dark": "#0F1F2B"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/cbassuarez/the-tub-harness"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/cbassuarez/the-tub-harness"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture"
             ]
           },
           {
-            "group": "Customization",
+            "group": "DSP Modes",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "modes/overview",
+              "modes/mode-0-clean",
+              "modes/mode-1-beat-repeat",
+              "modes/mode-2-granulator",
+              "modes/mode-3-roar-resonator",
+              "modes/mode-4-clean-samples",
+              "modes/mode-5-midi-resonification",
+              "modes/mode-6-parallel-dry",
+              "modes/mode-7-swap-buckets",
+              "modes/mode-8-spatial-dry",
+              "modes/mode-9-3band-spatial",
+              "modes/mode-10-special"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Running & Replay",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "running/live-run",
+              "running/replay-mode",
+              "running/session-artifacts"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Manifests & Routing",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "manifests/overview",
+              "manifests/instruments",
+              "manifests/banks-and-samples"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Protocol Contract",
             "pages": [
-              "api-reference/introduction"
+              "reference/mode-contract",
+              "reference/packet-types",
+              "reference/param-bounds",
+              "reference/visual-head"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Log Schema",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "reference/log-schema",
+              "reference/session-metadata",
+              "reference/events-log"
+            ]
+          },
+          {
+            "group": "Safety Rails & Testing",
+            "pages": [
+              "reference/safety-rails",
+              "reference/testing"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,203 @@
+---
+title: "Instruments Manifest"
+description: "Field reference for instruments.json — sampler sources, shaping metadata, and how midi_inst_id resolves across modes."
+keywords: ["instruments", "sampler", "midi_inst_id", "sample_pack_path", "soundfont_path", "sampler_preset_ref", "gain_db", "polyphony"]
+---
+
+`instruments.json` defines the sampler instruments that the MIDI-resonification modes use. Every entry describes a sampler — its audio source, voice budget, and playback shaping — and is keyed by a string ID that the model emits as `midi_inst_id` in its picks.
+
+## File location
+
+```
+TheTubHarness/TheTubHarness/Manifests/instruments.json
+```
+
+Loaded by `ManifestCatalog.shared` at startup. Accessed via `ManifestCatalog.shared.instruments`, which is a `[String: InstrumentManifestEntry]` dictionary.
+
+## Format rules
+
+Every entry must satisfy two constraints:
+
+1. `"type"` must be `"sampler"`. The `particle_synth` type exists in the Swift enum but is not used in this manifest.
+2. Exactly one source field must be present: `sample_pack_path`, `soundfont_path`, or `sampler_preset_ref`. You may supply more than one when both a directory-based pack and a soundfont are available for the same instrument — the engine will prefer `sample_pack_path` when present.
+
+<Warning>
+Entries missing a valid source field will load without error but will produce silence when the sampler tries to initialize. Always verify at least one source path is resolvable inside the app bundle.
+</Warning>
+
+## Full file
+
+```json
+{
+  "inst_A": {
+    "type": "sampler",
+    "sample_pack_path": "Assets/Sampler/inst_A",
+    "sampler_preset_ref": "SamplerPresets/inst_A.exs",
+    "gain_db": -1.0,
+    "polyphony_hint": 8,
+    "velocity_layers": 3,
+    "round_robin_count": 2
+  },
+  "inst_B": {
+    "type": "sampler",
+    "sample_pack_path": "Assets/Sampler/inst_B",
+    "sampler_preset_ref": "SamplerPresets/inst_B.exs",
+    "gain_db": -2.5,
+    "polyphony_hint": 8,
+    "velocity_layers": 2,
+    "round_robin_count": 1
+  },
+  "inst_C": {
+    "type": "sampler",
+    "soundfont_path": "Assets/Soundfonts/reso_pad.sf2",
+    "gain_db": -3.0,
+    "polyphony_hint": 6,
+    "velocity_layers": 2,
+    "round_robin_count": 1
+  },
+  "inst_D": {
+    "type": "sampler",
+    "sample_pack_path": "Assets/Sampler/inst_D",
+    "sampler_preset_ref": "SamplerPresets/inst_D.exs",
+    "gain_db": -1.5,
+    "polyphony_hint": 6,
+    "velocity_layers": 4,
+    "round_robin_count": 2
+  },
+  "inst_E": {
+    "type": "sampler",
+    "soundfont_path": "Assets/Soundfonts/reso_pluck.sf2",
+    "gain_db": -4.0,
+    "polyphony_hint": 4,
+    "velocity_layers": 2,
+    "round_robin_count": 1
+  },
+  "inst_P": {
+    "type": "sampler",
+    "sample_pack_path": "Assets/Sampler/inst_P",
+    "soundfont_path": "Assets/Soundfonts/inst_P.sf2",
+    "gain_db": -2.0,
+    "polyphony_hint": 8,
+    "velocity_layers": 3,
+    "round_robin_count": 2
+  }
+}
+```
+
+## Field reference
+
+### Required fields
+
+<ParamField path="type" type="string" required>
+  Must be `"sampler"`. No other value is valid for entries in this manifest.
+</ParamField>
+
+### Source fields (at least one required)
+
+<ParamField path="sample_pack_path" type="string">
+  Bundle-relative path to a directory containing sampler audio files (e.g., `"Assets/Sampler/inst_A"`). When present, this is the preferred source. Used by `inst_A`, `inst_B`, `inst_D`, `inst_P`.
+</ParamField>
+
+<ParamField path="soundfont_path" type="string">
+  Bundle-relative path to an SF2 soundfont file (e.g., `"Assets/Soundfonts/reso_pad.sf2"`). Used as the sole source for `inst_C` and `inst_E`; present alongside `sample_pack_path` on `inst_P`.
+</ParamField>
+
+<ParamField path="sampler_preset_ref" type="string">
+  Bundle-relative path to an EXS/Sampler preset file (e.g., `"SamplerPresets/inst_A.exs"`). Used by `inst_A`, `inst_B`, `inst_D` as a secondary reference alongside `sample_pack_path`.
+</ParamField>
+
+### Shaping fields (optional)
+
+<ParamField path="gain_db" type="number" default="-1.0">
+  Output gain adjustment in decibels applied before the mode's mixing stage. Negative values attenuate; use this to level-match instruments that differ in recorded loudness. Range across current entries: `−4.0` to `−1.0` dB.
+</ParamField>
+
+<ParamField path="polyphony_hint" type="number" default="8">
+  Suggested maximum simultaneous voices for this instrument. The engine uses this as a soft budget — hard voice caps are enforced separately by mode (mode 5: 8 voices, mode 6: 3 voices). Values in the current manifest: 4, 6, or 8.
+</ParamField>
+
+<ParamField path="velocity_layers" type="number">
+  Number of velocity layers in the sample set. Higher values allow finer dynamic expression. Current entries range from 2 to 4 layers. Used by the sampler to select the appropriate sample for a given MIDI velocity.
+</ParamField>
+
+<ParamField path="round_robin_count" type="number">
+  Number of round-robin alternates per note. Prevents the "machine gun" effect when the same pitch repeats rapidly. `1` means no round-robin; `2` means two alternating samples per note.
+</ParamField>
+
+## Swift struct
+
+```swift
+struct InstrumentManifestEntry: Codable, Equatable {
+    let type: InstrumentType          // must be .sampler
+    let preset: String?
+    let polyphony: Int?
+    let samplePackPath: String?
+    let soundfontPath: String?
+    let samplerPresetRef: String?
+    let gainDb: Double?
+    let polyphonyHint: Int?
+    let velocityLayers: Int?
+    let roundRobinCount: Int?
+}
+```
+
+JSON keys are snake_case; the catalog decodes them with `.convertFromSnakeCase`.
+
+## Which modes use instruments
+
+| Mode | Description | Default `midi_inst_id` | Hard voice cap |
+|---|---|---|---|
+| 5 | MIDI-resonification wet-only | `inst_A` | 8 voices, 12 notes/sec |
+| 6 | Parallel dry + resonifier | `inst_A` | 3 voices, 6 notes/sec |
+| 9 | 3-band spatial split | `inst_P` | — |
+
+Mode 9 uses `inst_P` rather than `inst_A` because its 3-band architecture benefits from `inst_P`'s combined `sample_pack_path` + `soundfont_path` source, which gives the engine flexibility to render each frequency band differently.
+
+<Info>
+Modes 5 and 6 enforce their own hard voice caps in `ModeEngine.swift` regardless of `polyphony_hint`. The `polyphony_hint` field informs sampler initialization only — it does not override the mode-level cap.
+</Info>
+
+## Resolution behavior
+
+When `midi_inst_id` in a `Picks` value does not match any key in `instruments.json`:
+
+1. `ManifestCatalog.resolve(mode:picks:)` checks `ModeContract.defaultPicksByMode[mode].midiInstId`
+2. If the mode default also fails, it falls to the first alphabetically sorted key in the instruments dictionary
+3. A note is appended to `PicksResolution.notes`: `"midi_inst_id fallback to <id>"`
+
+Key lookup is case-insensitive, so `"Inst_A"` resolves to `"inst_A"` correctly.
+
+## Adding a new instrument
+
+<Steps>
+  <Step title="Add the entry to instruments.json">
+    Choose a unique snake_case key. Include `"type": "sampler"` and at least one source path. Add shaping fields as needed.
+
+    ```json
+    "inst_F": {
+      "type": "sampler",
+      "soundfont_path": "Assets/Soundfonts/my_new_inst.sf2",
+      "gain_db": -2.0,
+      "polyphony_hint": 6,
+      "velocity_layers": 2,
+      "round_robin_count": 1
+    }
+    ```
+  </Step>
+  <Step title="Place the asset in the bundle">
+    Copy the SF2, EXS, or sample directory to the path you specified, relative to the app bundle root.
+  </Step>
+  <Step title="Reference the ID in a mode default or model output">
+    Update `ModeContract.defaultPicksByMode` if you want a mode to use this instrument by default, or emit the new `midi_inst_id` from the model.
+  </Step>
+  <Step title="Run the app and check validation warnings">
+    `ManifestCatalog.shared.logValidationSummary()` will confirm the new ID resolves. No warnings means the entry is valid.
+  </Step>
+</Steps>
+
+## Related
+
+- [Manifests & Routing Overview](/manifests/overview) — how all five manifests fit together and the full resolution fallback chain
+- [Banks, Chords, Motifs & Spatial Patterns](/manifests/banks-and-samples) — the other four manifest tables
+- [Mode contract reference](/reference/mode-contract) — per-mode required picks and defaults
+- [Packet types](/reference/packet-types) — the `Picks` struct and `ModelOut` wire format

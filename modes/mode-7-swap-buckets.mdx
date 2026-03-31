@@ -1,0 +1,100 @@
+---
+title: "Mode 7: Swap Buckets"
+description: "Wet-dominant stepped spectral redistribution where frequency band roles audibly swap on a deterministic schedule with crossfaded handoffs."
+---
+
+Mode 7 is a spectral bucket-swap processor. The audio spectrum is divided into frequency bands ("buckets"), and those bands are periodically reassigned to different output positions according to a deterministic mapping. The result is that the role each frequency region plays — bass anchor, mid presence, high shimmer — audibly moves around the mix rather than staying fixed. This is distinct from conventional filtering or EQ: the bands themselves are rerouted, not attenuated.
+
+The mode is wet-dominant by design. `mix` is clamped to a minimum of `0.86` in the final audio graph pass, and `dry_level` is derived as `0.24 - (mix × 0.14)`, meaning it approaches near-zero as `mix` approaches `1.0`.
+
+## How bucket swaps work
+
+On each swap event (governed by `swap_rate_hz`), the engine selects a new bucket scene from the deterministic mapping identified by `mapping_id` and `variant_seed`. The transition between scenes uses a crossfade window of `crossfade_ms` milliseconds — during this window both the outgoing and incoming bucket assignments are blended.
+
+`crossfade_ms` is the primary control over **audibility of the transition**:
+- Short crossfades (`20–80 ms`) produce a hard, step-like snap — the band roles abruptly switch.
+- Long crossfades (`300–600 ms`) produce a slow morph — the transition is gradual and may be perceived as filtering if too long.
+
+The safe default of `70 ms` sits in the short-snap region, where band roles are clearly heard to move.
+
+<Info>
+If Mode 7 sounds like broad filtering rather than distinct band-role movement, `crossfade_ms` is likely too high. Try reducing it toward `40–80 ms`. Also verify that `bucket_sharpness` is above `0.6` — low sharpness softens band boundaries and can make swaps sound filter-like.
+</Info>
+
+## Parameters
+
+<ParamField path="swap_rate_hz" type="float">
+  Rate at which bucket scenes are swapped. Range: 0.1–6 Hz. Safe default: `2.6`. At `0.1 Hz` scenes change very slowly (one swap every 10 seconds); at `6 Hz` swaps are rapid and create a flickering spectral effect. Internally normalized to `[0, 1]` for motion speed derivation.
+</ParamField>
+
+<ParamField path="crossfade_ms" type="float">
+  Duration of the crossfade window between outgoing and incoming bucket scenes. Range: 20–600 ms. Safe default: `70`. This is the primary knob controlling whether swaps sound like distinct band relocations (short) or gradual morphs (long). Values below `80 ms` are generally recommended for audible role movement.
+</ParamField>
+
+<ParamField path="bucket_sharpness" type="float">
+  Sharpness of the frequency band boundaries within each bucket. Range: 0–1 (normalized). Safe default: `0.74`. Higher values produce crisp, well-separated bands with minimal bleed between buckets. Lower values soften the boundaries and can make swaps less perceptually distinct.
+</ParamField>
+
+<ParamField path="mapping_entropy" type="float">
+  Controls how unpredictable the bucket reassignment sequence feels. Range: 0–1 (normalized). Safe default: `0.72`. At low entropy the mapping is highly deterministic and the same sequence repeats predictably. Higher entropy introduces more variation in which bucket scenes are selected next, while remaining deterministic given the same `variant_seed`.
+</ParamField>
+
+<ParamField path="mix" type="float">
+  Wet/dry mix. Range: 0–1 (normalized). Safe default: `0.94`. Mode 7 is wet-dominant — the audio graph enforces a minimum wet level of `0.86` regardless of what `mix` reports. Dry level is derived automatically as `0.24 - (mix × 0.14)` and approaches near-zero at high mix values. Do not expect a 50/50 wet/dry blend from this mode.
+</ParamField>
+
+## Safe defaults
+
+```json
+{
+  "swap_rate_hz": 2.6,
+  "crossfade_ms": 70.0,
+  "bucket_sharpness": 0.74,
+  "mapping_entropy": 0.72,
+  "mix": 0.94
+}
+```
+
+## Default picks
+
+```json
+{
+  "preset_id": "buckets_A",
+  "spatial_pattern_id": "cluster_rotate",
+  "mapping_id": "swap_pairs",
+  "variant_seed": 7,
+  "mapping_family": "bucket_swap"
+}
+```
+
+<Note>
+`variant_seed` is an integer, not a float. It seeds the deterministic bucket-scene selection sequence. Changing `variant_seed` changes the sequence of scenes selected, but the sequence remains fully deterministic for any given seed value. This is important for replay consistency: the same seed will always produce the same swap sequence.
+</Note>
+
+## Legacy aliases
+
+The following legacy param names are accepted and rescaled to their canonical counterparts:
+
+| Legacy name | Canonical name | Transform |
+|-------------|---------------|-----------|
+| `swap_rate` | `swap_rate_hz` | `linear(0.1, 6.0)` |
+| `morph_rate` | `swap_rate_hz` | `linear(0.1, 6.0)` |
+| `crossfade` | `crossfade_ms` | `linear(20.0, 600.0)` |
+| `sharpness` | `bucket_sharpness` | identity (0–1) |
+| `bias` | `mapping_entropy` | identity (0–1) |
+| `wet` | `mix` | identity (0–1) |
+
+## What to verify by ear
+
+- **Band roles should audibly move.** The defining characteristic of Mode 7 is that what was in the bass is now in the high frequencies and vice versa — not that frequencies are cut or boosted. If swaps sound like an EQ or broad filter sweep, inspect `crossfade_ms` (likely too high) and `bucket_sharpness` (likely too low).
+- At `swap_rate_hz = 2.6` and `crossfade_ms = 70` (safe defaults), swaps should be clearly perceptible but not frantic. They should land like a rhythmic event, not a continuous morph.
+- The output should be wet-dominant. Significant dry signal bleedthrough at high `mix` values is a sign of a contract violation or an incorrect safe-default fallback.
+- Spatial motion (`cluster_rotate` default) should place bucket content across the stereo/spatial field — the swapped bands should appear to move in space as they exchange roles.
+- Reverb is intentionally minimal in this mode (`≤ 0.08` wet) to preserve the sharpness of the spectral redistribution. Audible reverb wash is unexpected and indicates a contract enforcement issue.
+
+## See also
+
+- [Mode 3: Roar/Resonator](/modes/mode-3-roar-resonator) — another spectrally aggressive mode, but with resonant coloring rather than band swapping
+- [Mode 9: 3-Band Spatial Split](/modes/mode-9-3band-spatial) — per-band spatial control without swapping
+- [reference/mode-contract](/reference/mode-contract)
+- [reference/param-bounds](/reference/param-bounds)

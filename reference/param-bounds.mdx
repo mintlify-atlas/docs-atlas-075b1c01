@@ -1,0 +1,221 @@
+---
+title: "Parameter Bounds"
+description: "Complete per-mode parameter bounds reference for all 11 DSP modes."
+keywords: ["parameter bounds", "clamping", "mode params", "modeBounds", "safe defaults"]
+---
+
+Every parameter returned in `ModelOut.params` is validated and clamped against the bounds defined in `ModeContract.modeBounds`. Params outside their bounds are clamped silently and logged as interventions. Non-finite values and unknown param names are hard violations that trigger safe defaults for the entire output.
+
+## Default bounds
+
+All parameters default to `[0.0, 1.0]` unless a mode-specific override is listed below. Overrides only apply to the mode they are defined for — the same param name in a different mode keeps the default `[0.0, 1.0]` bounds.
+
+<Note>
+Out-of-range params are clamped silently and logged with a `param_clamped_low:` or `param_clamped_high:` violation string. These are soft violations — clamped output is still used. Non-finite and unknown params are hard violations that replace the entire output with safe defaults.
+</Note>
+
+## Per-mode bounds reference
+
+<AccordionGroup>
+
+<Accordion title="Mode 0 — Room / Reverb" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `dry_level` | 0.0 | 1.0 | yes | Dry signal level. Safe default: `0.92`. |
+| `reverb_mix` | 0.0 | 1.0 | yes | Wet/dry reverb mix. Safe default: `0.12`. |
+| `reverb_decay_s` | 0.2 | 2.8 | **no** | Reverb decay time in seconds. Safe default: `0.9`. |
+| `pre_delay_ms` | 0.0 | 60.0 | **no** | Pre-delay in milliseconds. Safe default: `12.0`. |
+| `tone_db` | −6.0 | 6.0 | **no** | Tonal EQ shift in dB. Safe default: `0.0`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 1 — Beat / Stutter" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `fracture` | 0.0 | 1.0 | yes | Fracture/repeat probability. Safe default: `0.58`. |
+| `mutation` | 0.0 | 1.0 | yes | Mutation / jitter amount. Safe default: `0.42`. |
+| `pitch_lock` | 0.0 | 1.0 | yes | Pitch lock amount. Safe default: `0.68`. |
+| `hold_len_s` | 6.0 | 12.0 | **no** | Hold length in seconds. Safe default: `8.0`. |
+| `tail_fade_ms` | 150.0 | 1200.0 | **no** | Tail fade in milliseconds. Safe default: `480.0`. |
+| `scene_rate_hz` | 0.25 | 12.0 | **no** | Scene rate in Hz. Safe default: `3.0`. |
+| `motion_speed` | 0.0 | 1.0 | yes | Motion speed. Safe default: `0.45`. |
+| `spread` | 0.0 | 1.0 | yes | Spread amount. Safe default: `0.62`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`, `grid_div`, `repeat_style_id`
+
+</Accordion>
+
+<Accordion title="Mode 2 — Granular" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `grain_size_ms` | 12.0 | 120.0 | **no** | Grain size in milliseconds. Safe default: `28.0`. |
+| `grain_density` | 0.1 | 0.9 | **no** | Grain density. Safe default: `0.62`. |
+| `scan_rate` | 0.0 | 1.0 | yes | Scan rate through buffer. Safe default: `0.58`. |
+| `freeze_prob` | 0.0 | 0.75 | **no** | Freeze probability. Safe default: `0.08`. |
+| `freeze_len_s` | 0.2 | 6.0 | **no** | Freeze length in seconds. Safe default: `0.9`. |
+| `pitch_spread_cents` | 0.0 | 35.0 | **no** | Pitch spread in cents. Safe default: `24.0`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 3 — Distortion / Bit" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `drive` | 0.0 | 0.85 | **no** | Drive amount. Safe default: `0.52`. |
+| `bit_depth_bits` | 8.0 | 24.0 | **no** | Bit depth in bits. Safe default: `12.0`. |
+| `downsample_amt` | 0.0 | 1.0 | yes | Downsample amount. Safe default: `0.44`. |
+| `res_shift` | 0.0 | 1.0 | yes | Resonance shift. Safe default: `0.64`. |
+| `tone_db` | −9.0 | 6.0 | **no** | Tonal EQ shift in dB. Safe default: `−3.0`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 4 — Gesture / Sample" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `density` | 0.0 | 1.0 | yes | Gesture density. Safe default: `0.38`. |
+| `gesture_rate_hz` | 0.1 | 6.0 | **no** | Gesture rate in Hz. Safe default: `1.2`. |
+| `sample_mix` | 0.0 | 1.0 | yes | Sample wet mix. Safe default: `0.30`. |
+| `dry_level` | 0.0 | 1.0 | yes | Dry signal level. Safe default: `0.72`. |
+| `stability` | 0.0 | 1.0 | yes | Stability preference. Safe default: `0.7`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`, `bank_id`, `sample_id`
+
+</Accordion>
+
+<Accordion title="Mode 5 — MIDI / Wet" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `note_rate_notes_per_s` | 0.0 | 12.0 | **no** | Note rate in notes per second. Safe default: `4.0`. |
+| `voice_cap` | 2.0 | 8.0 | **no** | Maximum voice count (safety rail: 8 voices max). Safe default: `4.0`. |
+| `pitch_follow` | 0.65 | 1.0 | **no** | Pitch follow amount. Safe default: `0.82`. |
+| `velocity_bias` | 0.0 | 1.0 | yes | Velocity bias. Safe default: `0.55`. |
+| `level` | 0.0 | 1.0 | yes | Output level. Safe default: `0.62`. |
+| `stability` | 0.0 | 1.0 | yes | Stability preference. Safe default: `0.72`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`, `midi_inst_id`, `chord_set_id`
+
+</Accordion>
+
+<Accordion title="Mode 6 — MIDI / Dry" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `note_rate_notes_per_s` | 0.0 | 6.0 | **no** | Note rate in notes per second. Safe default: `2.4`. |
+| `voice_cap` | 1.0 | 3.0 | **no** | Maximum voice count (safety rail: 3 voices max). Safe default: `2.0`. |
+| `pitch_follow` | 0.65 | 1.0 | **no** | Pitch follow amount. Safe default: `0.8`. |
+| `velocity_bias` | 0.0 | 1.0 | yes | Velocity bias. Safe default: `0.52`. |
+| `level` | 0.0 | 1.0 | yes | Output level. Safe default: `0.58`. |
+| `stability` | 0.0 | 1.0 | yes | Stability preference. Safe default: `0.72`. |
+| `dry_level` | 0.35 | 0.95 | **no** | Dry signal floor/ceiling. Safe default: `0.68`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`, `midi_inst_id`, `chord_set_id`
+
+</Accordion>
+
+<Accordion title="Mode 7 — Bucket Swap" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `swap_rate_hz` | 0.1 | 6.0 | **no** | Swap rate in Hz. Safe default: `2.6`. |
+| `crossfade_ms` | 20.0 | 600.0 | **no** | Crossfade duration in milliseconds. Safe default: `70.0`. |
+| `bucket_sharpness` | 0.0 | 1.0 | yes | Bucket selection sharpness. Safe default: `0.74`. |
+| `mapping_entropy` | 0.0 | 1.0 | yes | Mapping entropy / randomness. Safe default: `0.72`. |
+| `mix` | 0.0 | 1.0 | yes | Wet mix. Safe default: `0.94`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 8 — Ambient / Reverb Field" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `reverb_rand_amt` | 0.0 | 1.0 | yes | Reverb randomization amount. Safe default: `0.28`. |
+| `reverb_decay_base_s` | 0.2 | 3.5 | **no** | Base reverb decay in seconds. Safe default: `1.0`. |
+| `reverb_decay_range_s` | 0.0 | 2.0 | **no** | Reverb decay variance range in seconds. Safe default: `0.6`. |
+| `reverb_color` | 0.0 | 1.0 | yes | Reverb colour / damping. Safe default: `0.42`. |
+| `twitchiness` | 0.0 | 1.0 | yes | Twitchiness / modulation rate. Safe default: `0.32`. |
+| `motion_speed` | 0.0 | 1.0 | yes | Motion speed. Safe default: `0.38`. |
+| `spread` | 0.0 | 1.0 | yes | Spread. Safe default: `0.58`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 9 — Particle Field" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `particle_density` | 0.0 | 1.0 | yes | Particle density. Safe default: `0.42`. |
+| `particle_voice_cap` | 1.0 | 24.0 | **no** | Maximum particle voice count. Safe default: `8.0`. |
+| `particle_decay_s` | 0.05 | 2.5 | **no** | Particle decay time in seconds. Safe default: `0.55`. |
+| `particle_brightness` | 0.0 | 1.0 | yes | Particle brightness. Safe default: `0.45`. |
+| `motion_speed` | 0.0 | 1.0 | yes | Motion speed. Safe default: `0.35`. |
+| `spread` | 0.0 | 1.0 | yes | Spread. Safe default: `0.65`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`
+
+</Accordion>
+
+<Accordion title="Mode 10 — Special Scene" defaultOpen={false}>
+
+| Parameter | Min | Max | Default `[0,1]`? | Notes |
+|---|---|---|---|---|
+| `scene_len_s` | 8.0 | 90.0 | **no** | Scene length in seconds. Safe default: `24.0`. |
+| `chaos` | 0.0 | 1.0 | yes | Chaos amount. Safe default: `0.55`. |
+| `blend` | 0.0 | 1.0 | yes | Blend amount. Safe default: `0.58`. |
+| `stability` | 0.0 | 1.0 | yes | Stability preference. Safe default: `0.62`. |
+
+**Required picks:** `preset_id`, `spatial_pattern_id`, `scene_id`
+
+</Accordion>
+
+</AccordionGroup>
+
+## Visual head bounds
+
+Visual head fields have their own independent bounds enforced by `ModeContract.sanitize(visual:mode:)`.
+
+| Field | Min | Max | Notes |
+|---|---|---|---|
+| `density` | 0.0 | 1.0 | |
+| `cohesion` | 0.0 | 1.0 | |
+| `disruption` | 0.0 | 1.0 | |
+| `token_salience` | 0.0 | 1.0 | |
+| `wordmark_integrity` | 0.0 | 1.0 | |
+| `flash_bias` | 0.0 | 1.0 | |
+| `decay_ms` | 120 | 2400 | Integer (milliseconds). Clamped if out of range. |
+
+## Clamping and violation behaviour
+
+| Condition | Violation type | Effect |
+|---|---|---|
+| Param value below lower bound | `param_clamped_low:<key>:<raw>-><clamped>` | Soft — clamped value used, logged |
+| Param value above upper bound | `param_clamped_high:<key>:<raw>-><clamped>` | Soft — clamped value used, logged |
+| Non-finite param value (`NaN`, `Inf`) | `param_not_finite:<key>` | **Hard** — safe defaults for entire output |
+| Unknown param name | `param_not_allowed:<key>` | **Hard** — safe defaults for entire output |
+| Density cap triggered | `density_cap` | Soft — informational |
+| Voice cap triggered | `voice_cap` | Soft — informational |
+
+<Warning>
+Hard violations (`param_not_finite`, `param_not_allowed`, `protocol_version_mismatch`, `mode_mismatch`, `missing_pick`) cause `ModeContract.enforceIncoming` to discard the entire `ModelOut` and substitute safe defaults. Soft violations log but pass through.
+</Warning>
+
+## Default value for missing params
+
+When a param is missing from `ModelOut.params`, the harness fills it with the midpoint of its bounds: `(min + max) / 2`. Per-mode `safeModeParams` override this midpoint with tuned defaults when safe defaults are applied due to a hard violation.
+
+---
+
+**Related pages:** [Mode Contract](/reference/mode-contract) · [Packet Types](/reference/packet-types) · [Visual Head](/reference/visual-head) · [Modes overview](/modes/overview)

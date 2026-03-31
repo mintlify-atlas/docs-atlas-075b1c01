@@ -1,0 +1,197 @@
+---
+title: "Mode Contract"
+description: "Locked protocol v2 contract governing all communication between the harness and the model server."
+keywords: ["protocol", "contract", "fingerprint", "safe defaults", "mode contract"]
+---
+
+The Mode Contract is the single source of truth for the wire protocol between the harness and the model server. It is **locked at protocol version 2** (`contract_version: control_surface_v2`). Every field, bound, required pick, and visual-head schema is pinned to a deterministic SHA-256 fingerprint. Any drift between the harness and model repo is a release blocker.
+
+## Contract locking
+
+The contract is pinned at startup. The locked fingerprint is a SHA-256 hash of the serialized `ContractLockPayload` — a deterministic snapshot of all mode-specific params, legacy aliases, required picks, bounds, safe defaults, and visual-head schema.
+
+| Field | Value |
+|---|---|
+| `protocol_version` | `2` |
+| `contract_version` | `control_surface_v2` |
+| `lockedContractFingerprint` | `3394bcdfa3c207eb33da3679ee7d15d9f017bba1ab2da6567a930947f9fb586f` |
+
+```swift
+// ModeContract.swift
+static let supportedProtocolVersion = 2
+static let contractVersion = "control_surface_v2"
+static let lockedContractFingerprint = "3394bcdfa3c207eb33da3679ee7d15d9f017bba1ab2da6567a930947f9fb586f"
+```
+
+The fingerprint is computed from the `ContractLockPayload` struct, which captures all contract tables as serializable, sorted JSON:
+
+```swift
+struct ContractLockPayload: Codable, Equatable {
+    let protocolVersion: Int
+    let contractVersion: String
+    let modeSpecificParams: [String: [String]]
+    let legacyParamAliases: [String: [String: String]]
+    let requiredPicksByMode: [String: [String]]
+    let modeBounds: [String: [String: [Double]]]
+    let safeModeParams: [String: [String: Double]]
+    let visualSceneIds: [String]
+    let visualBounds: [String: [Double]]
+    let visualThoughtVocab: [String]
+}
+```
+
+### Change policy
+
+If any contract table or visual schema changes, you must:
+
+1. Intentionally bump `protocol_version` and/or `contractVersion`.
+2. Regenerate the fingerprint.
+3. Update `lockedContractFingerprint` in lockstep with the model repo.
+4. Cover the change with test assertions.
+
+<Warning>
+A fingerprint mismatch between the harness and the model repo is a **release blocker**. Do not ship if `lock=mismatch` appears in startup logs.
+</Warning>
+
+## Contract lock status
+
+Two functions expose lock status at runtime:
+
+```swift
+static func contractLockStatus() -> ContractLockStatus
+static func isContractLockMatched() -> Bool
+```
+
+`contractLockStatus()` returns a `ContractLockStatus` struct:
+
+```swift
+struct ContractLockStatus: Equatable {
+    let lockedFingerprint: String   // the pinned value from source
+    let computedFingerprint: String // SHA-256 of current runtime tables
+    let matched: Bool
+}
+```
+
+`isContractLockMatched()` is a convenience wrapper that returns `contractLockStatus().matched`.
+
+## Startup lock check
+
+On startup, `TubMLClient` calls `ModeContract.contractLockStatus()` and emits a log line:
+
+```
+contract lock=ok   fingerprint=3394bcdfa3c207eb33da3679ee7d15d9f017bba1ab2da6567a930947f9fb586f
+contract lock=mismatch  locked=3394bcd…  computed=<different>
+```
+
+| Value | Meaning |
+|---|---|
+| `lock=ok` | Runtime tables match the pinned fingerprint. Safe to run. |
+| `lock=mismatch` | Runtime tables have diverged from the pin. Release blocker — investigate before proceeding. |
+
+## Protocol rules
+
+All packet decoding enforces these rules at the JSON layer. Violations throw `DecodingError` and are never silently swallowed.
+
+<Note>
+Both `ModelIn` and `ModelOut` reject any `protocol_version` other than `2` at decode time. Legacy v1 outputs are rejected with a protocol error and are never silently inferred on the stage path.
+</Note>
+
+| Rule | Behaviour on violation |
+|---|---|
+| `ModelIn` and `ModelOut` must carry `protocol_version` | Decode error |
+| Unsupported `protocol_version` | Decode error |
+| Unknown JSON keys in any packet type | Decode error (`assertNoUnknownKeys`) |
+| `mode` must be in `0...10` | Decode error |
+| `ModelOut.visual` is required in protocol v2 | Decode error (field is non-optional) |
+| Legacy v1 model outputs | Protocol error, never silently passed to the stage |
+
+## `ModeContract.enforceIncoming(modelOut:currentMode:)`
+
+```swift
+static func enforceIncoming(modelOut: ModelOut, currentMode: Int) -> (ModelOut, [String])
+```
+
+Called by `TubMLClient` on every received `ModelOut`. Returns a sanitized `ModelOut` and a list of violation strings. The function:
+
+1. **Clamps params** — calls `clamp(params:mode:)` which resolves legacy aliases, applies transforms, and clamps every value to its per-mode bounds. Non-finite values are rejected. Unknown params are rejected.
+2. **Validates picks** — checks that all `requiredPicksByMode[mode]` fields are present and non-empty.
+3. **Sanitizes visual** — calls `sanitize(visual:mode:)` which validates `scene_id`, clamps all visual bounds, normalises `anchor_weights`, and falls back `thought` to `"idle"` if unknown.
+4. **Hard violation check** — if any violation has prefix `protocol_version_mismatch:`, `mode_mismatch:`, `missing_pick:`, `param_not_allowed:`, or `param_not_finite:`, the entire output is replaced with safe defaults.
+
+```swift
+let hasHardViolation = violations.contains(where: {
+    $0.hasPrefix("protocol_version_mismatch:")
+    || $0.hasPrefix("mode_mismatch:")
+    || $0.hasPrefix("missing_pick:")
+    || $0.hasPrefix("param_not_allowed:")
+    || $0.hasPrefix("param_not_finite:")
+})
+
+if hasHardViolation {
+    return (safeDefaults(mode: mode, tsMs: modelOut.tsMs, contractViolation: true), violations)
+}
+```
+
+Soft violations (e.g. `param_clamped_low:`, `visual_clamped:`) are logged as interventions but the clamped output is still used.
+
+## `ModeContract.safeDefaults(mode:tsMs:contractViolation:)`
+
+```swift
+static func safeDefaults(
+    mode: Int,
+    tsMs: Int = Int(Date().timeIntervalSince1970 * 1000),
+    contractViolation: Bool
+) -> ModelOut
+```
+
+Returns a fully populated `ModelOut` using the per-mode `safeModeParams` table, `defaultPicksByMode`, and `VisualOut.defaultForMode(mode)`. When `contractViolation: true`, the returned `Flags` has `thinEvents: true` and `preferStability: true`.
+
+This is the deterministic fallback for any hard protocol violation. It is also called by `protocolViolationFallback(mode:tsMs:)`.
+
+## Contract payload structure
+
+`ContractLockPayload` is the serialised snapshot used to compute the fingerprint. All dictionary keys are sorted for determinism. Fields:
+
+<ResponseField name="protocolVersion" type="Int" required>
+  Always `2` for contract v2.
+</ResponseField>
+
+<ResponseField name="contractVersion" type="String" required>
+  Always `"control_surface_v2"`.
+</ResponseField>
+
+<ResponseField name="modeSpecificParams" type="[String: [String]]" required>
+  Sorted canonical param names keyed by mode number (as string). E.g. `"0": ["dry_level", "pre_delay_ms", "reverb_decay_s", "reverb_mix", "tone_db"]`.
+</ResponseField>
+
+<ResponseField name="legacyParamAliases" type="[String: [String: String]]" required>
+  Per-mode map of legacy key → canonical key. Used for backward-compatible decoding.
+</ResponseField>
+
+<ResponseField name="requiredPicksByMode" type="[String: [String]]" required>
+  Sorted required pick keys per mode. All modes require `preset_id` and `spatial_pattern_id` at minimum.
+</ResponseField>
+
+<ResponseField name="modeBounds" type="[String: [String: [Double]]]" required>
+  Per-mode, per-param bounds as `[min, max]` pairs. Params not listed default to `[0.0, 1.0]`.
+</ResponseField>
+
+<ResponseField name="safeModeParams" type="[String: [String: Double]]" required>
+  Per-mode safe default param values used when a hard contract violation is detected.
+</ResponseField>
+
+<ResponseField name="visualSceneIds" type="[String]" required>
+  All valid `scene_id` values. See [Visual Head](/reference/visual-head).
+</ResponseField>
+
+<ResponseField name="visualBounds" type="[String: [Double]]" required>
+  Visual field bounds as `[min, max]`. See [Parameter Bounds](/reference/param-bounds).
+</ResponseField>
+
+<ResponseField name="visualThoughtVocab" type="[String]" required>
+  All 20 valid `thought` strings. Unknown values fall back to `"idle"`.
+</ResponseField>
+
+---
+
+**Related pages:** [Packet Types](/reference/packet-types) · [Parameter Bounds](/reference/param-bounds) · [Visual Head](/reference/visual-head) · [Architecture](/architecture)
